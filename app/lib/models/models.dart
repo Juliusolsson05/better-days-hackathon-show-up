@@ -13,6 +13,7 @@ class Profile {
   final List<String> tags;
   final String city;
   final List<String> availability;
+  final String phone;
 
   const Profile({
     required this.id,
@@ -22,6 +23,7 @@ class Profile {
     required this.tags,
     required this.city,
     required this.availability,
+    required this.phone,
   });
 }
 
@@ -30,11 +32,13 @@ class Member {
   final String displayName;
   final String avatar;
   final List<String> tags;
+  final String? photoUrl;
   const Member({
     required this.id,
     required this.displayName,
     required this.avatar,
     this.tags = const [],
+    this.photoUrl,
   });
 }
 
@@ -44,9 +48,9 @@ class VenueOption {
   final String address;
   final String pitch; // one line, written for this group
   final List<String> categories;
-  // Nullable because a venue is still showable without them -- the map degrades to the
-  // address rather than the screen failing. Both come straight from the pick-venues
-  // response, which carries them for every option.
+  // Coordinates come from grounded venue retrieval, but remain nullable so legacy groups can
+  // still render. The map degrades to the address rather than making missing backfill data a
+  // reason the whole group screen fails.
   final double? lat;
   final double? lng;
   const VenueOption({
@@ -78,8 +82,9 @@ class Group {
     this.chosenVenueId,
   });
 
-  VenueOption? get chosenVenue =>
-      chosenVenueId == null ? null : venueOptions.firstWhere((v) => v.id == chosenVenueId);
+  VenueOption? get chosenVenue => chosenVenueId == null
+      ? null
+      : venueOptions.firstWhere((v) => v.id == chosenVenueId);
 }
 
 enum MessageKind { user, venueVote, system }
@@ -92,6 +97,7 @@ class Message {
   final String body;
   final DateTime sentAt;
   final MessageKind kind;
+  final String? authorPhotoUrl;
   const Message({
     required this.id,
     required this.authorId,
@@ -100,6 +106,7 @@ class Message {
     required this.body,
     required this.sentAt,
     this.kind = MessageKind.user,
+    this.authorPhotoUrl,
   });
   bool get isMine => authorId == 'me';
 }
@@ -121,10 +128,12 @@ class MutualContact {
   final String displayName;
   final String avatar;
   final String phone;
+  final String? photoUrl;
   const MutualContact({
     required this.id,
     required this.displayName,
     required this.avatar,
     required this.phone,
+    this.photoUrl,
   });
 }

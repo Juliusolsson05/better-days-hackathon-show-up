@@ -14,6 +14,10 @@ abstract class Repository {
   /// screen or straight into onboarding.
   Future<bool> isSignedIn();
 
+  /// A session and an onboarded profile are separate facts. Restored auth must not force an
+  /// existing user through signup again, while a freshly verified user still needs onboarding.
+  Future<bool> hasProfile();
+
   /// Email OTP, step one: mail a six-digit code (and create the user if new).
   Future<void> sendEmailOtp(String email);
 
@@ -27,8 +31,11 @@ abstract class Repository {
     required List<String> tags,
     required String city,
     required List<String> availability,
-    /// Local file path from the image picker. Uploaded to Supabase Storage and sent
-    /// to submit-profile as photo_url. Null is allowed; the edge function accepts it.
+    required String phone,
+
+    /// Local file path from the image picker. The real backend requires it; nullable stays in
+    /// the interface only because platform pickers can return no result and the mock is also
+    /// used in widget tests that do not have a photo-library plugin.
     String? photoPath,
   });
 
@@ -46,7 +53,11 @@ abstract class Repository {
 
   Future<Assignment> assignment(String groupId);
 
-  Future<void> submitReflection(String groupId, String text, {bool wasFallback = false});
+  Future<void> submitReflection(
+    String groupId,
+    String text, {
+    bool wasFallback = false,
+  });
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp);
 
   /// Selections are one-way and private. Nothing tells anyone they were not selected.

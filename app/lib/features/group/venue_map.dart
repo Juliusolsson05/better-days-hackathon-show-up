@@ -1,5 +1,6 @@
 import 'package:apple_maps_flutter/apple_maps_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme.dart';
@@ -16,28 +17,91 @@ import '../../models/models.dart';
 /// Getting there is deliberately a hand-off to the system map app rather than in-app
 /// navigation: Apple Maps already knows about transit, traffic and walking, and someone ten
 /// minutes out wants the app they trust, not ours.
-class VenueMap extends StatelessWidget {
+typedef VenueGeocoder = Future<LatLng?> Function(String address);
+
+class VenueMap extends StatefulWidget {
   final VenueOption venue;
   final double height;
-  const VenueMap(this.venue, {super.key, this.height = 160});
+  const VenueMap(this.venue, {super.key, this.height = 160, this.geocode});
+
+  /// The injected seam makes the native address lookup deterministic in widget tests. Production
+  /// always uses Apple's geocoder, so reference fixtures gain real coordinates without hard-coded
+  /// guesses or a second map provider/API key.
+  final VenueGeocoder? geocode;
+
+  @override
+  State<VenueMap> createState() => _VenueMapState();
+}
+
+class _VenueMapState extends State<VenueMap> {
+  LatLng? _target;
+  var _resolving = false;
+  var _resolutionEpoch = 0;
+
+  VenueOption get venue => widget.venue;
+
+  @override
+  void initState() {
+    super.initState();
+    _target = _explicitTarget;
+    if (_target == null) _resolveAddress();
+  }
+
+  @override
+  void didUpdateWidget(covariant VenueMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.venue.id == venue.id &&
+        oldWidget.venue.address == venue.address &&
+        oldWidget.venue.lat == venue.lat &&
+        oldWidget.venue.lng == venue.lng) {
+      return;
+    }
+    _target = _explicitTarget;
+    if (_target == null) _resolveAddress();
+  }
+
+  LatLng? get _explicitTarget =>
+      venue.hasLocation ? LatLng(venue.lat!, venue.lng!) : null;
+
+  Future<void> _resolveAddress() async {
+    if (venue.address.trim().isEmpty) return;
+    final epoch = ++_resolutionEpoch;
+    _resolving = true;
+    final venueId = venue.id;
+    try {
+      final resolved = widget.geocode != null
+          ? await widget.geocode!(venue.address)
+          : await _geocodeAddress(venue.address);
+      // A venue can change while CLGeocoder is in flight. Applying the old result would put the
+      // new venue's title on the previous venue's pin, which is worse than showing no map.
+      if (mounted && epoch == _resolutionEpoch && venue.id == venueId) {
+        setState(() => _target = resolved);
+      }
+    } catch (_) {
+      // Native geocoding is rate-limited and can be unavailable offline. The address remains a
+      // useful, honest fallback; the map retries naturally if this widget is reconstructed.
+    } finally {
+      if (mounted && epoch == _resolutionEpoch && venue.id == venueId) {
+        setState(() => _resolving = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // No coordinates is a legitimate state -- a venue is still showable by address, and a
-    // broken map is worse than none. pick-venues always returns them; hand-curated or
-    // partially-migrated data might not.
-    if (!venue.hasLocation) {
-      return _Fallback(venue.address);
-    }
+    final target = _target;
+    if (target == null) return _Fallback(venue.address, resolving: _resolving);
 
-    final target = LatLng(venue.lat!, venue.lng!);
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: SizedBox(
-        height: height,
+        height: widget.height,
         child: Stack(
           children: [
             AppleMap(
+              key: ValueKey(
+                '${venue.id}:${target.latitude}:${target.longitude}',
+              ),
               initialCameraPosition: CameraPosition(target: target, zoom: 15.5),
               annotations: {
                 Annotation(
@@ -62,7 +126,7 @@ class VenueMap extends StatelessWidget {
               right: 8,
               bottom: 8,
               child: FilledButton.icon(
-                onPressed: () => _openDirections(venue),
+                onPressed: () => _openDirections(venue, target),
                 icon: const Icon(Icons.directions, size: 18),
                 label: const Text('Directions'),
                 style: FilledButton.styleFrom(
@@ -86,11 +150,18 @@ class VenueMap extends StatelessWidget {
   }
 }
 
+Future<LatLng?> _geocodeAddress(String address) async {
+  final matches = await Geocoding().locationFromAddress(address);
+  if (matches.isEmpty) return null;
+  final first = matches.first;
+  return LatLng(first.latitude, first.longitude);
+}
+
 /// `maps.apple.com` rather than the `maps://` scheme: the https form is handled by Apple
 /// Maps on device and degrades to the web map anywhere else, so it cannot dead-end.
-Future<void> _openDirections(VenueOption v) async {
+Future<void> _openDirections(VenueOption v, LatLng target) async {
   final uri = Uri.https('maps.apple.com', '/', {
-    'll': '${v.lat},${v.lng}',
+    'll': '${target.latitude},${target.longitude}',
     'q': v.name,
     'dirflg':
         'w', // walking; these are neighbourhood venues, not cross-town trips
@@ -100,7 +171,8 @@ Future<void> _openDirections(VenueOption v) async {
 
 class _Fallback extends StatelessWidget {
   final String address;
-  const _Fallback(this.address);
+  final bool resolving;
+  const _Fallback(this.address, {required this.resolving});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -111,10 +183,24 @@ class _Fallback extends StatelessWidget {
     ),
     alignment: Alignment.center,
     padding: const EdgeInsets.all(16),
-    child: Text(
-      address,
-      textAlign: TextAlign.center,
-      style: const TextStyle(color: bodyInk),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (resolving) ...[
+          const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+        ],
+        Flexible(
+          child: Text(
+            address,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: bodyInk),
+          ),
+        ),
+      ],
     ),
   );
 }

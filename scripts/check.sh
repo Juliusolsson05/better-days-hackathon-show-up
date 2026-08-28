@@ -14,6 +14,10 @@ command -v deno >/dev/null || { echo "deno not installed: brew install deno"; ex
 
 # _shared/* is checked transitively through the functions that import it, but list it anyway
 # so a shared module with no importer yet still gets checked.
-exec deno check \
+deno check \
   supabase/functions/_shared/*.ts \
   supabase/functions/*/index.ts
+
+# --allow-env because clickhouse.ts reads its secrets at module load; the tests populate
+# dummy values. Nothing here touches the network.
+exec deno test --allow-env --quiet supabase/functions/_shared/

@@ -47,11 +47,24 @@ Deno.serve(async (req) => {
       .contains('availability', [slot])
       .not('embedded_at', 'is', null);
     if (poolErr) throw poolErr;
-    if (!pool?.length) {
-      return Response.json({ groups: 0, reason: 'empty pool' }, { headers: CORS });
+
+    // currentGroup() expects one membership because the schema does not yet model meetup
+    // history versus a current group. Filter already-assigned profiles before doing vector
+    // work, then let create_matched_group() re-check under row locks for correctness if two
+    // sweeps overlap. The client-side filter is a cost optimisation, not the safety boundary.
+    const candidateIds = (pool ?? []).map((p) => p.id);
+    const assigned = new Set<string>();
+    if (candidateIds.length) {
+      const { data: memberships, error: membershipErr } = await db
+        .from('group_members')
+        .select('user_id')
+        .in('user_id', candidateIds);
+      if (membershipErr) throw membershipErr;
+      for (const row of memberships ?? []) assigned.add(row.user_id);
     }
 
-    const unassigned = new Map(pool.map((p) => [p.id, p]));
+    const eligible = (pool ?? []).filter((p) => !assigned.has(p.id));
+    const unassigned = new Map(eligible.map((p) => [p.id, p]));
     const skipped: string[] = [];
     const formed: string[] = [];
     let lastStats = { elapsed: 0, rows_read: 0, bytes_read: 0 };
@@ -148,36 +161,73 @@ Deno.serve(async (req) => {
       const seedDistance = rows.filter((r) => picked.includes(r.user_id))
         .reduce((s, r) => s + r.d, 0) / (picked.length - 1);
 
-      const { data: group, error: gErr } = await db.from('groups').insert({
-        event_at: nextSlot(slot),
-        venue: plan.venue,
-        activity: plan.activity,
-        // Column is still named cohesion in the applied schema; the draft renames it
-        // to seed_distance, which is what it actually measures.
-        cohesion: seedDistance,
-      }).select('id').single();
-      if (gErr) throw gErr;
-
-      const { error: gmErr } = await db.from('group_members').insert(
-        picked.map((id) => ({
-          group_id: group!.id,
+      // Group + memberships + RSVPs is one user-visible fact. The database RPC commits all
+      // three tables or none and re-checks uniqueness while participant rows are locked; three
+      // independent PostgREST writes left partial groups whenever a later request failed.
+      const { data: groupId, error: groupErr } = await db.rpc('create_matched_group', {
+        meetup_at: nextSlot(slot),
+        fallback_venue: plan.venue,
+        group_activity: plan.activity,
+        distance: seedDistance,
+        member_rows: picked.map((id) => ({
           user_id: id,
           pair_with: byId.get(id)!.pair_with,
           question: byId.get(id)!.question,
         })),
-      );
-      if (gmErr) throw gmErr;
-
-      const { error: rErr } = await db.from('rsvps').insert(
-        picked.map((id) => ({ group_id: group!.id, user_id: id, status: 'pending' })),
-      );
-      if (rErr) throw rErr;
+      });
+      if (groupErr) {
+        if (groupErr.code === '23505') {
+          // Another overlapping sweep won the profile locks. Remove those members from this
+          // in-memory run and continue instead of failing every unrelated group in the batch.
+          for (const id of picked) unassigned.delete(id);
+          skipped.push(...picked);
+          continue;
+        }
+        throw groupErr;
+      }
 
       for (const id of picked) unassigned.delete(id);
       await Promise.all(picked.map((id) =>
-        emit('group_formed', id, group!.id, { seed_distance: seedDistance, size: picked.length })
+        emit('group_formed', id, groupId, { seed_distance: seedDistance, size: picked.length })
       ));
-      formed.push(group!.id);
+      formed.push(groupId as string);
+    }
+
+    // Venue retrieval is deliberately after the group transaction: ClickHouse/Voyage/Claude
+    // failures should leave a valid group with its legacy fallback, never half a membership.
+    // Include recent pre-existing groups with no ballot so rerunning the operator action is a
+    // recovery mechanism. pick-venues itself returns cached rows before external work, making
+    // this safe to repeat for groups whose options already landed between the two reads.
+    const { data: recentGroups, error: groupsErr } = await db
+      .from('groups')
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (groupsErr) throw groupsErr;
+
+    const recentIds = (recentGroups ?? []).map((g) => g.id as string);
+    const ready = new Set<string>();
+    if (recentIds.length) {
+      const { data: optionGroups, error: optionsErr } = await db
+        .from('venue_options')
+        .select('group_id')
+        .in('group_id', recentIds);
+      if (optionsErr) throw optionsErr;
+      for (const row of optionGroups ?? []) ready.add(row.group_id);
+    }
+
+    const venueFailures: { group_id: string; error: string }[] = [];
+    let venueReady = 0;
+    for (const groupId of recentIds.filter((id) => !ready.has(id))) {
+      try {
+        await ensureVenueBallot(groupId);
+        venueReady += 1;
+      } catch (err) {
+        // Matching success is not rolled back by a recommendation dependency. Return the
+        // exact group IDs so the dashboard makes partial readiness visible and a rerun can
+        // target the same durable groups instead of rematching their people.
+        venueFailures.push({ group_id: groupId, error: String(err) });
+      }
     }
 
     // Returned so the demo can put the real scan numbers on screen.
@@ -185,6 +235,8 @@ Deno.serve(async (req) => {
       groups: formed.length,
       unmatched: unassigned.size,
       skipped: skipped.length,
+      venue_ready: venueReady,
+      venue_failures: venueFailures,
       stats: lastStats,
     }, { headers: CORS });
   } catch (err) {
@@ -192,6 +244,26 @@ Deno.serve(async (req) => {
     return Response.json({ error: String(err) }, { status: 500, headers: CORS });
   }
 });
+
+async function ensureVenueBallot(groupId: string): Promise<void> {
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) throw new Error('missing Supabase service configuration');
+
+  const res = await fetch(`${url}/functions/v1/pick-venues`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${key}`,
+      apikey: key,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ group_id: groupId, limit: 3 }),
+  });
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 500);
+    throw new Error(`pick-venues failed (${res.status}): ${detail}`);
+  }
+}
 
 /**
  * Stance tags are written as `stance:<position>`. Two people holding opposite positions on

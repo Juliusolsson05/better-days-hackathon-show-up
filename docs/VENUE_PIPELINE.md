@@ -24,6 +24,9 @@ The implementation order is:
    result is deterministic and replayable.
 5. Read options, the caller's private ballot, and the anonymous tally through the Flutter
    repository seam. The phone never receives anyone else's ballot.
+6. Commit the group, its members, and their pending RSVPs through one service-only database
+   function. Venue generation begins only after that transaction succeeds, and a failed venue
+   call is reported and retried independently instead of duplicating or half-creating a group.
 
 The existing `groups.venue` JSON remains as a backwards-compatible fallback for groups made
 before this migration. New real options take precedence whenever they exist. Removing that

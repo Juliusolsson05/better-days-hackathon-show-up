@@ -6,9 +6,18 @@ import '../models/models.dart';
 /// ChangeNotifier rather than a state-management package: one less dependency, and the
 /// app has exactly one piece of global state -- where you are in the flow.
 class AppState extends ChangeNotifier {
-  AppState(this.repo, {Phase initialPhase = Phase.onboarding})
-    : phase = initialPhase;
+  AppState(
+    this.repo, {
+    Phase initialPhase = Phase.onboarding,
+    this.referenceUiPreview = false,
+  }) : phase = initialPhase;
   final Repository repo;
+
+  /// The reference build deliberately models screens that do not yet have backend
+  /// contracts. Making preview eligibility constructor-owned keeps tests explicit and,
+  /// more importantly, prevents a restored Supabase session from drifting into static
+  /// sample data merely because Flutter happens to be running in debug mode.
+  final bool referenceUiPreview;
 
   Phase phase;
   Profile? me;
@@ -31,13 +40,7 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    group = await repo.currentGroup();
-    if (group == null) {
-      phase = Phase.waiting;
-    } else {
-      assignment = await repo.assignment(group!.id);
-      phase = Phase.matched;
-    }
+    await _loadProductPhase();
     notifyListeners();
   }
 
@@ -54,8 +57,37 @@ class AppState extends ChangeNotifier {
 
   Future<void> completeOnboarding(Profile p) async {
     me = p;
-    phase = Phase.waiting;
+    if (referenceUiPreview) {
+      phase = Phase.home;
+    } else {
+      // Profile completion is durable, but matching is server-owned. Reading the
+      // repository immediately avoids both invented client-side matches and a brief
+      // trip through the static reference shell before the waiting/chat destination.
+      await _loadProductPhase();
+    }
     notifyListeners();
+  }
+
+  /// The approved mock permits skipping onboarding. This changes only presentation state;
+  /// it deliberately does not create a fake backend profile or smuggle placeholder data
+  /// through the repository contract.
+  void skipOnboarding() {
+    // Only the approved preview has somewhere legitimate to skip to. In every other
+    // configuration the waiting screen is the safest non-fabricated destination; the
+    // real onboarding UI does not expose this control, so no backend profile is implied.
+    phase = referenceUiPreview ? Phase.home : Phase.waiting;
+    notifyListeners();
+  }
+
+  Future<void> _loadProductPhase() async {
+    group = await repo.currentGroup();
+    if (group == null) {
+      assignment = null;
+      phase = Phase.waiting;
+      return;
+    }
+    assignment = await repo.assignment(group!.id);
+    phase = Phase.matched;
   }
 
   /// Group formation and the chat opening are the same event -- there is no lobby.

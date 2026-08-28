@@ -65,6 +65,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # These files are copied byte-for-byte from the pinned mock submodule. Flutter cannot
+  # bundle assets from outside its package root, so duplication is intentional: the
+  # submodule proves provenance while this directory is the runtime bundle.
+  assets:
+    - assets/mock/
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

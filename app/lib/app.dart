@@ -15,6 +15,7 @@ import 'features/group/no_show_sheet.dart';
 import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
+import 'features/product/product_shell.dart';
 
 class ShowUpApp extends StatefulWidget {
   const ShowUpApp({super.key});
@@ -27,11 +28,21 @@ class _ShowUpAppState extends State<ShowUpApp> {
   /// calls Supabase.initialize under the same flag, so MockRepository stays the default
   /// and needs no cloud project.
   static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
+  static const _showReferenceUi = bool.fromEnvironment('SHOW_REFERENCE_UI');
 
   late final Repository _repo = _useSupabase
       ? SupabaseRepository(Supabase.instance.client)
       : MockRepository();
-  late final AppState _state = AppState(_repo, initialPhase: _initialPhase());
+  late final AppState _state = AppState(
+    _repo,
+    initialPhase: _initialPhase(),
+    // The reference shell is intentionally a mock-only preview. It contains static
+    // example groups whose "join" controls are presentation prototypes, so routing a
+    // real session there would fork the product lifecycle away from Postgres truth.
+    // Debug builds make visual review convenient; SHOW_REFERENCE_UI makes the same
+    // preview available in a release-mode reference build without weakening production.
+    referenceUiPreview: !_useSupabase && (kDebugMode || _showReferenceUi),
+  );
   bool _restoring = _useSupabase;
   Object? _restoreError;
 
@@ -124,6 +135,11 @@ class _ShowUpAppState extends State<ShowUpApp> {
                 switch (_state.phase) {
                   Phase.auth => AuthScreen(_state),
                   Phase.onboarding => OnboardingScreen(_state),
+                  // Phase.home is never selected by real onboarding or restoration.
+                  // Keeping the branch in the production router avoids a second app
+                  // entrypoint solely for reference review, while AppState owns the
+                  // invariant that only an explicitly enabled preview can enter it.
+                  Phase.home => ProductShell(_state),
                   Phase.waiting => WaitingScreen(_state),
                   Phase.matched || Phase.during => GroupChatScreen(_state),
                   Phase.after => AfterFlow(_state),
@@ -197,6 +213,7 @@ class _DevJump extends StatelessWidget {
           },
           itemBuilder: (_) => const [
             PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
+            PopupMenuItem(value: Phase.home, child: Text('2 - Home')),
             PopupMenuItem(value: Phase.waiting, child: Text('2 - Waiting')),
             PopupMenuItem(
               value: Phase.matched,

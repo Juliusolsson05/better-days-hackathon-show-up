@@ -9,10 +9,10 @@ import { site } from '@/lib/site';
  * The landing page.
  *
  * Written for someone who has never heard of this and is deciding in about eight seconds
- * whether it is for them. Order: the feeling they already have, then what we do about it,
- * then the mechanism, then the promises. The technical story -- ClickHouse, embeddings, the
- * matcher -- is genuinely interesting and lives entirely in /deck. Here it would answer a
- * question this visitor has not asked.
+ * whether it is for them. Order: the feeling they already have, then the objection plus
+ * the mechanism in one beat, then the promises. The technical story -- ClickHouse,
+ * embeddings, the matcher -- is genuinely interesting and lives entirely in /deck. Here
+ * it would answer a question this visitor has not asked.
  *
  * The hero used to be copy-only. The first illustration we tried was a labelled diagram of
  * a table, and it failed because it restated the headline instead of proving it. The phone
@@ -22,31 +22,28 @@ import { site } from '@/lib/site';
  * the image sits on the right on wide screens, where a second column is free.
  */
 
-/** A real sequence, which is the only reason it is numbered. */
+/**
+ * Four beats of the same evening, not a numbered tutorial. They used to sit under a
+ * "How it works" eyebrow, which made the page explain itself. The heading now carries
+ * the objection those steps answer, so the sequence does not need a label or numerals
+ * -- both would restate what the visitor can already see from the cards.
+ */
 const STEPS = [
   {
-    title: 'Tell us what you like.',
-    body:
-      'Pick your interests and tell us what you could talk about for hours. That is what '
-      + 'we use to find your people.',
+    title: "You tell us what you're into",
+    body: "A few interests. That's all the matching needs.",
   },
   {
-    title: 'Meet your group.',
-    body:
-      'We pair you with four to six like-minded people who are free on the same evening. '
-      + 'Everyone arrives solo.',
+    title: 'We put you with four or five people',
+    body: 'Small on purpose. Everyone came by themselves.',
   },
   {
-    title: 'Choose a public place.',
-    body:
-      'Your private group chat opens with a few venue options. Vote anonymously and pick '
-      + 'the place that feels right.',
+    title: 'You talk before you meet',
+    body: 'A group chat opens right away. You pick the place together.',
   },
   {
-    title: 'Show up together.',
-    body:
-      'We remind you before the meetup and tell you exactly where to find the group. No '
-      + 'awkward searching, no walking in alone.',
+    title: 'You show up',
+    body: 'We tell you where to go and who to look for. No scanning the room.',
   },
 ];
 
@@ -136,29 +133,23 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ---- The problem ----------------------------------------------------------- */}
-      <section className="py-20 sm:py-28">
-        <h2 className="display max-w-4xl text-5xl sm:text-6xl">
-          Meeting new people should not feel like dating.
-        </h2>
-        <p className="mt-8 max-w-2xl text-xl leading-8 text-body">
-          Endless profiles, forced small talk, and wondering whether you belong make meeting
-          people feel harder than it should. Show Up removes the audition. We create a small
-          group around shared interests and give everyone the same simple plan: arrive solo,
-          meet somewhere public, and start from common ground.
-        </p>
-      </section>
-
-      {/* ---- How it works ---------------------------------------------------------- */}
+      {/* ---- Walking in alone ------------------------------------------------------ */}
+      {/*
+        This used to be two sections: a problem statement ("should not feel like dating")
+        and a numbered how-it-works grid. The problem copy restated the hero, and the
+        eyebrow plus 01-04 numerals made the grid look like a manual. One heading now
+        names the fear; the cards are the answer. Sage stays so the canvas cards read
+        as cards rather than disappearing into the page.
+      */}
       <section className="band band-sage py-20 sm:py-28">
-        <p className="eyebrow">How it works</p>
+        <h2 className="display max-w-4xl text-5xl sm:text-6xl">
+          Most plans die at the thought of walking in alone. But not if everyone's
+          alone.
+        </h2>
         <ol className="mt-12 grid gap-6 sm:grid-cols-2">
-          {STEPS.map((step, i) => (
+          {STEPS.map((step) => (
             <li key={step.title} className="rounded-3xl bg-canvas p-6 sm:p-8">
-              <span className="display text-4xl text-ink-deep">
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <h3 className="display mt-3 text-2xl">{step.title}</h3>
+              <h3 className="display text-2xl">{step.title}</h3>
               <p className="mt-4 leading-6 text-body">{step.body}</p>
             </li>
           ))}
@@ -166,31 +157,36 @@ export default function Home() {
       </section>
 
       {/* ---- The assigned question ------------------------------------------------- */}
+      {/*
+        The pale-green quote card used to stand in for this feature by restating the
+        body copy. The phone mockup is the real surface -- a private card over the group
+        chat -- so it proves the claim instead of repeating it. The eyebrow went with the
+        card: the heading already says what the section is. Intrinsic size is the PNG
+        (1310x2708); CSS shrinks it. A 50/50 column at full width would make a phone this
+        tall dominate the copy, so the slot stays capped the way the hero phone is.
+      */}
       <section className="py-20 sm:py-28">
-        <div className="grid items-center gap-14 lg:grid-cols-2">
+        <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-14">
           <div>
-            <p className="eyebrow">The bit that does the work</p>
-            <h2 className="display mt-6 text-4xl sm:text-5xl">
-              Never get stuck wondering what to say.
+            <h2 className="display text-4xl sm:text-5xl">
+              Before you get there, we give you one thing to ask.
             </h2>
             <p className="mt-8 max-w-lg text-lg leading-7 text-body">
-              Before the meetup, everyone gets one thoughtful question to ask one person in
-              the group. It turns the hardest first minute into an easy conversation — and
-              makes sure every person is included.
+              Not an icebreaker for the table. One question, meant for one person in your
+              group. Everyone gets one, and nobody sees anyone else's. So the first ten
+              minutes have a job, and you're not the one who has to start.
             </p>
           </div>
 
-          {/* Real product output, not an illustration of it: this is the shape the app
-              actually delivers. Tilted a degree because a perfectly square card reads as a
-              UI panel rather than as something handed to you. */}
-          <div className="rounded-3xl bg-primary-pale p-8 sm:p-10">
-            <p className="eyebrow text-ink-deep">Just for you</p>
-            <p className="display mt-5 text-2xl leading-snug sm:text-[1.75rem]">
-              Ask Tom which record changed the way he listens to music — and why.
-            </p>
-            <p className="mt-6 text-sm text-body">
-              Nobody else can see this, and everyone has one.
-            </p>
+          <div className="mx-auto w-full max-w-xs sm:max-w-sm">
+            <Image
+              src="/question-mockup.png"
+              alt="Show Up on a phone: a private question to ask Theo, over a group chat."
+              width={1310}
+              height={2708}
+              sizes="(min-width: 1024px) 24rem, 320px"
+              className="h-auto w-full"
+            />
           </div>
         </div>
       </section>

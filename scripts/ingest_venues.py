@@ -209,27 +209,42 @@ def embed(texts, batch=500):
         if i:
             time.sleep(EMBED_INTERVAL_S)
         for attempt in range(8):
-            res = requests.post(
-                "https://api.voyageai.com/v1/embeddings",
-                headers={"Authorization": f"Bearer {VOYAGE_KEY}"},
-                json={
-                    "input": chunk,
-                    "model": "voyage-4",
-                    "input_type": None,
-                    "output_dimension": DIMS,
-                },
-                timeout=180,
-            )
+            try:
+                res = requests.post(
+                    "https://api.voyageai.com/v1/embeddings",
+                    headers={"Authorization": f"Bearer {VOYAGE_KEY}"},
+                    json={
+                        "input": chunk,
+                        "model": "voyage-4",
+                        "input_type": None,
+                        "output_dimension": DIMS,
+                    },
+                    timeout=180,
+                )
+            except requests.exceptions.RequestException as e:
+                # Connection reset, timeout, proxy 502. A run this long will meet one
+                # eventually, and losing seven thousand embeddings to a transient blip is
+                # not a reason to start over.
+                wait = min(60, 2 ** attempt)
+                print(f"  network error ({type(e).__name__}), retrying in {wait}s",
+                      file=sys.stderr)
+                time.sleep(wait)
+                continue
             if res.status_code == 429:
                 wait = float(res.headers.get("Retry-After", min(60, 2 ** attempt)))
                 print(f"  rate limited, sleeping {wait:.0f}s", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            if res.status_code >= 500:
+                wait = min(60, 2 ** attempt)
+                print(f"  voyage {res.status_code}, retrying in {wait}s", file=sys.stderr)
                 time.sleep(wait)
                 continue
             res.raise_for_status()
             out.extend(d["embedding"] for d in res.json()["data"])
             break
         else:
-            raise SystemExit(f"voyage kept rate limiting at item {i}")
+            raise SystemExit(f"voyage did not recover at item {i} after 8 attempts")
         print(f"  embedded {len(out)}/{len(texts)}", file=sys.stderr)
     return out
 

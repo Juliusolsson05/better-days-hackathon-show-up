@@ -31,15 +31,38 @@ ThemeData buildTheme() {
   );
 }
 
+/// A round avatar. [source] is either an emoji (the mock's convention), a short bit of
+/// text to show as-is, or an http(s) URL -- the real backend passes `profiles.photo_url`,
+/// so a URL loads the image and anything else renders as a glyph. An empty string or a
+/// failed image load falls back to a neutral face.
 class Avatar extends StatelessWidget {
-  final String emoji;
+  final String source;
   final double size;
-  const Avatar(this.emoji, {super.key, this.size = 40});
+  const Avatar(this.source, {super.key, this.size = 40});
+
+  bool get _isUrl => source.startsWith('http://') || source.startsWith('https://');
+
   @override
-  Widget build(BuildContext context) => Container(
-        width: size, height: size,
+  Widget build(BuildContext context) {
+    if (_isUrl) {
+      return ClipOval(
+        child: Image.network(
+          source,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _glyph('🙂'),
+        ),
+      );
+    }
+    return _glyph(source.isEmpty ? '🙂' : source);
+  }
+
+  Widget _glyph(String text) => Container(
+        width: size,
+        height: size,
         decoration: const BoxDecoration(color: surface, shape: BoxShape.circle),
         alignment: Alignment.center,
-        child: Text(emoji, style: TextStyle(fontSize: size * 0.5)),
+        child: Text(text, style: TextStyle(fontSize: size * 0.5)),
       );
 }

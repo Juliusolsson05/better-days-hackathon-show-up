@@ -100,7 +100,11 @@ class _DevJump extends StatelessWidget {
           ),
           onSelected: (p) async {
             if (p == Phase.matched && state.group == null) {
-              (state.repo as MockRepository).formGroup();
+              // Mock: fabricate a group. Real backend: just fetch whatever run-matching
+              // has already written for this user.
+              if (state.repo is MockRepository) {
+                (state.repo as MockRepository).formGroup();
+              }
               await state.enterGroup();
               return;
             }

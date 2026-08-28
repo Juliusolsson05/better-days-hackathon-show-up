@@ -53,11 +53,14 @@ Deno.serve(async (req) => {
     const { data: alreadyMatched, error: matchedErr } = await db.from(
       "group_members",
     )
-      .select("user_id")
+      .select("user_id, group_id")
       .eq("matching_run_key", runKey);
     if (matchedErr) throw matchedErr;
     const matchedIds = new Set(
       (alreadyMatched ?? []).map((row) => row.user_id),
+    );
+    const existingCycleGroups = new Set(
+      (alreadyMatched ?? []).map((row) => row.group_id),
     );
 
     const { data: pool, error: poolErr } = await db.from("profiles")
@@ -214,6 +217,25 @@ Deno.serve(async (req) => {
         p_run_key: runKey,
         p_event_timezone: "America/Los_Angeles",
       });
+      if (gErr?.code === "23505") {
+        // Another sweep can win a different formation containing some of the same people after
+        // this worker chose its candidates. The database correctly rolls this transaction back;
+        // refresh only the contested same-run users and continue so unrelated people later in
+        // the pool are not stranded by ordinary cron overlap.
+        const { data: wonRows, error: wonErr } = await db
+          .from("group_members")
+          .select("user_id, group_id")
+          .eq("matching_run_key", runKey)
+          .in("user_id", picked);
+        if (wonErr) throw wonErr;
+        if (!wonRows?.length) throw gErr;
+        for (const row of wonRows) {
+          unassigned.delete(row.user_id);
+          skipped.push(row.user_id);
+          existingCycleGroups.add(row.group_id);
+        }
+        continue;
+      }
       if (gErr) throw gErr;
       if (typeof groupId !== "string") {
         throw new Error("form_group returned no group id");
@@ -227,7 +249,6 @@ Deno.serve(async (req) => {
       // are already committed at this point, and losing the whole sweep over an opening
       // message would strand everyone matched after this group. An unopened room is
       // recoverable by calling open-chat; a half-finished sweep is not.
-      let chatReady = false;
       try {
         await openChat(
           db,
@@ -238,33 +259,11 @@ Deno.serve(async (req) => {
             tags: m.tags ?? [],
           })),
         );
-        chatReady = true;
       } catch (chatErr) {
         console.error(
           `group ${groupId} formed but its chat did not open`,
           chatErr,
         );
-      }
-
-      // Retrieval stays a separately retryable function because ClickHouse, Voyage, and Claude
-      // fail for reasons unrelated to group formation. Invoke it only after the opener: if the
-      // venue anchor arrived first, open_group_chat would correctly see a non-empty room and the
-      // social framing line would never be written.
-      if (chatReady) {
-        try {
-          // This call uses the same service-role client as the matching sweep. pick-venues
-          // intentionally rejects user tokens because otherwise any member could replace the
-          // group's choices before voting begins and make the audit trail meaningless.
-          const { error: venueErr } = await db.functions.invoke("pick-venues", {
-            body: { group_id: groupId, limit: 3 },
-          });
-          if (venueErr) throw venueErr;
-        } catch (venueErr) {
-          console.error(
-            `group ${groupId} formed but venues were not persisted`,
-            venueErr,
-          );
-        }
       }
 
       for (const id of picked) unassigned.delete(id);
@@ -279,11 +278,71 @@ Deno.serve(async (req) => {
       formed.push(groupId);
     }
 
+    // Group formation commits before chat and venue dependencies on purpose. A rerun for the
+    // same weekly key must therefore repair groups whose follow-up work timed out, not merely
+    // decline to rematch their members. This pass includes both groups created above and groups
+    // discovered by the stable run key at startup.
+    const cycleGroupIds = [...new Set([...existingCycleGroups, ...formed])];
+    const groupsWithBallots = new Set<string>();
+    if (cycleGroupIds.length) {
+      const { data: optionRows, error: optionErr } = await db
+        .from("venue_options")
+        .select("group_id")
+        .in("group_id", cycleGroupIds);
+      if (optionErr) throw optionErr;
+      for (const row of optionRows ?? []) groupsWithBallots.add(row.group_id);
+    }
+
+    const venueFailures: { group_id: string; error: string }[] = [];
+    let venueReady = 0;
+    for (const groupId of cycleGroupIds) {
+      if (groupsWithBallots.has(groupId)) continue;
+      try {
+        // Always repair the opener before adding the vote anchor. open_group_chat is row-locked
+        // and idempotent; reversing this order would let a venue card make the room non-empty and
+        // permanently suppress the social framing line after a prior chat timeout.
+        const { data: membershipRows, error: membershipErr } = await db
+          .from("group_members")
+          .select("user_id")
+          .eq("group_id", groupId);
+        if (membershipErr) throw membershipErr;
+        const memberIds = (membershipRows ?? []).map((row) => row.user_id);
+        const { data: profileRows, error: profileErr } = await db
+          .from("profiles")
+          .select("id, display_name, tags")
+          .in("id", memberIds);
+        if (profileErr) throw profileErr;
+        await openChat(
+          db,
+          groupId,
+          (profileRows ?? []).map((profile) => ({
+            id: profile.id,
+            display_name: profile.display_name,
+            tags: profile.tags ?? [],
+          })),
+        );
+
+        // This call uses the same service-role client as the matching sweep. pick-venues rejects
+        // user tokens because a member must never be able to manufacture or replace candidates.
+        const { error: venueErr } = await db.functions.invoke("pick-venues", {
+          body: { group_id: groupId, limit: 3 },
+        });
+        if (venueErr) throw venueErr;
+        venueReady += 1;
+      } catch (venueErr) {
+        console.error(`group ${groupId} is missing venue readiness`, venueErr);
+        venueFailures.push({ group_id: groupId, error: String(venueErr) });
+      }
+    }
+
     // Returned so the demo can put the real scan numbers on screen.
     return Response.json({
       groups: formed.length,
       unmatched: unassigned.size,
       skipped: skipped.length,
+      venue_existing: groupsWithBallots.size,
+      venue_ready: venueReady,
+      venue_failures: venueFailures,
       stats: lastStats,
     }, { headers: CORS });
   } catch (err) {

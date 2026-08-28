@@ -196,19 +196,10 @@ class SupabaseRepository implements Repository {
       final legacy = decodeLegacyVenue(groupRow['venue'], groupId);
       if (legacy != null) venues.add(legacy);
     }
-    if (venues.isEmpty) {
-      // Group formation and venue retrieval are intentionally separate jobs. The group screen
-      // must remain navigable in the gap instead of crashing on `venueOptions.first`.
-      venues.add(
-        const VenueOption(
-          id: 'pending',
-          name: 'Venue coming soon',
-          address: 'The group will vote here when options are ready.',
-          pitch: '',
-          categories: [],
-        ),
-      );
-    }
+    // An empty list is a legitimate, short-lived state because group/chat formation commits
+    // independently from external venue retrieval. Do not manufacture a VenueOption sentinel:
+    // if the vote-card message arrives before this projection refreshes, a fake option would be
+    // rendered as votable and Postgres would correctly reject its made-up id.
 
     return Group(
       id: groupId,

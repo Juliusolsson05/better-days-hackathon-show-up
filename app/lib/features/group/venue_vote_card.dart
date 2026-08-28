@@ -70,6 +70,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
       // Re-read both values after a successful write. Locally incrementing a tally would leak a
       // stale count whenever another member voted concurrently.
       await _load();
+      // The final ballot chooses the winner in the same database transaction as the vote. The
+      // card's tally is not enough to reveal that server-owned transition, so refresh the shared
+      // Group before the user opens group info or the map.
+      await widget.state.refreshGroup();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -113,7 +117,9 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Where should you go?',
+                  group.chosenVenue == null
+                      ? 'Where should you go?'
+                      : '${group.chosenVenue!.name} selected',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -123,7 +129,7 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
           Text(
             group.chosenVenueId == null
                 ? 'Anonymous. Nobody sees who picked what.'
-                : 'Voting is closed. Your group destination is set.',
+                : 'The result is shared. Individual ballots stay private.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
@@ -137,6 +143,11 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
                   borderRadius: BorderRadius.circular(inputRadius),
                 ),
               )
+          else if (group.venueOptions.isEmpty)
+            const Text(
+              'Grounded venue options are still being prepared.',
+              style: TextStyle(color: bodyInk),
+            )
           else if (_error != null && _tally.isEmpty)
             TextButton(onPressed: _load, child: Text('${_error!} Retry'))
           else ...[
@@ -159,6 +170,7 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
   Widget _option(VenueOption venue, int votes) {
     final mine = _myVote == venue.id;
     final finalized = widget.state.group!.chosenVenueId != null;
+    final selected = widget.state.group!.chosenVenueId == venue.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
@@ -170,8 +182,8 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
             color: mine ? accentPale : bg,
             borderRadius: BorderRadius.circular(inputRadius),
             border: Border.all(
-              color: mine ? inkDeep : Colors.transparent,
-              width: mine ? 1.5 : 1,
+              color: mine || selected ? inkDeep : Colors.transparent,
+              width: mine || selected ? 1.5 : 1,
             ),
           ),
           child: Column(
@@ -185,6 +197,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
+                  if (selected) ...[
+                    const Icon(Icons.check_circle, size: 17, color: positive),
+                    const SizedBox(width: 7),
+                  ],
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 9,

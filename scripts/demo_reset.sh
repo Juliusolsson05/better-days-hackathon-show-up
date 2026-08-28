@@ -9,14 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env
 
-echo "→ clearing groups, private assignments, ballots, reflections, and contacts"
+echo "→ clearing group-owned demo state"
 psql "$SUPABASE_DB_URL" -q <<'SQL'
--- Keep this explicit rather than relying only on CASCADE: when a new group-scoped table lands,
--- a reviewer can see whether rehearsal state must include it. Silent leftovers are how the
--- second demo run ends up showing the first run's votes.
-truncate contact_selections, attendance_votes, venue_votes, venue_options,
-         member_assignments, reflections, rsvps, messages, group_members
-restart identity cascade;
+-- `groups` is the aggregate root. Every membership, RSVP, message, assignment, reflection,
+-- attendance ballot, contact choice, venue option, and venue vote has an ON DELETE CASCADE path
+-- from it. Naming leaves here drifted as parallel migrations added and retired tables, causing
+-- the reset itself to fail before a rehearsal; deleting the root follows the schema contract.
 delete from groups;
 SQL
 

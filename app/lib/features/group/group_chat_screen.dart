@@ -24,6 +24,8 @@ class GroupChatScreen extends StatefulWidget {
 class _GroupChatScreenState extends State<GroupChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
+  Timer? _groupRefresh;
+  bool _refreshingGroup = false;
 
   /// Supabase creates a new realtime channel every time watchMessages is called, so the
   /// stream belongs to this State object's lifecycle rather than build(). A ListenableBuilder,
@@ -56,10 +58,40 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // makes the private acknowledgement reachable after a cold start, while waiting one frame
     // avoids presenting a modal before this route owns a valid Navigator context.
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
+
+    if (widget.state.group!.chosenVenueId == null) {
+      // Ballots are private, so an earlier voter receives no realtime row when somebody else's
+      // final vote selects the winner. Poll the small shared Group projection instead of making
+      // private votes observable merely to trigger UI. The final voter refreshes immediately;
+      // everyone else converges within ten seconds.
+      _groupRefresh = Timer.periodic(const Duration(seconds: 10), (_) {
+        if (widget.state.group?.chosenVenueId != null) {
+          _groupRefresh?.cancel();
+          return;
+        }
+        unawaited(_refreshGroupProjection());
+      });
+    }
+  }
+
+  Future<void> _refreshGroupProjection() async {
+    // Timer.periodic does not wait for its callback. Without this guard, a slow mobile request can
+    // overlap the next tick and make an older response overwrite a newer chosen-venue result.
+    if (_refreshingGroup) return;
+    _refreshingGroup = true;
+    try {
+      await widget.state.refreshGroup();
+      if (widget.state.group?.chosenVenueId != null) _groupRefresh?.cancel();
+    } catch (_) {
+      // Chat remains live while this best-effort projection refresh retries on the next tick.
+    } finally {
+      _refreshingGroup = false;
+    }
   }
 
   @override
   void dispose() {
+    _groupRefresh?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();

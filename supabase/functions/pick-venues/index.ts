@@ -17,6 +17,36 @@ import {
   retrieve,
 } from "../_shared/venues.ts";
 
+type StoredVenueOption = {
+  position: number;
+  provider_id: string;
+  name: string;
+  kind: string;
+  address: string;
+  locality: string;
+  lat: number;
+  lng: number;
+  score: number | null;
+  member_scores: number[];
+  pitch: string;
+};
+
+function storedOption(option: StoredVenueOption) {
+  return {
+    position: option.position,
+    venue_id: option.provider_id,
+    name: option.name,
+    kind: option.kind,
+    address: option.address,
+    locality: option.locality,
+    lat: option.lat,
+    lng: option.lng,
+    score: option.score,
+    per_member: option.member_scores,
+    pitch: option.pitch,
+  };
+}
+
 Deno.serve(async (req) => {
   try {
     const auth = req.headers.get("Authorization") ?? "";
@@ -40,6 +70,31 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
+
+    if (group_id) {
+      const { data: existing, error: existingErr } = await db
+        .from("venue_options")
+        .select(
+          "position,provider_id,name,kind,address,locality,lat,lng,score,member_scores,pitch",
+        )
+        .eq("group_id", group_id)
+        .order("position");
+      if (existingErr) throw existingErr;
+      if (existing?.length) {
+        // A retry after the first worker committed must reuse the exact ballot people may already
+        // be looking at. Returning before Voyage/Claude also turns an ambiguous edge timeout into
+        // a cheap read instead of paying to invent a second candidate set that Postgres rejects.
+        if (existing.length < 2 || existing.length > 3) {
+          throw new Error(`group ${group_id} has a partial venue ballot`);
+        }
+        return Response.json({
+          options: existing.map((option) => storedOption(option)),
+          persisted: true,
+          cached: true,
+          scanned: { rows_read: 0, elapsed_s: 0 },
+        });
+      }
+    }
 
     // Either a real group, or an ad-hoc member list so the pipeline can be exercised before
     // run-matching has produced any groups. The demo depends on being able to run this
@@ -112,19 +167,25 @@ Deno.serve(async (req) => {
       pitch: pitches.get(v.venue_id) ?? "",
     }));
 
+    let responseOptions = options;
     if (group_id) {
       // The database locks the group, refuses replacement after voting begins, writes every
       // option, and creates exactly one chat anchor. Keeping that transition in one RPC means a
       // function timeout can be retried without the edge worker guessing which writes landed.
-      const { error } = await db.rpc("replace_venue_options", {
+      const { data: installed, error } = await db.rpc("replace_venue_options", {
         grp: group_id,
         options,
       });
       if (error) throw error;
+      // A racing worker may have installed a different, equally valid ballot while this worker
+      // was embedding. Return the rows Postgres actually retained, never the discarded proposal.
+      responseOptions = (installed ?? []).map((option: unknown) =>
+        storedOption(option as StoredVenueOption)
+      );
     }
 
     return Response.json({
-      options,
+      options: responseOptions,
       persisted: Boolean(group_id),
       // Straight from ClickHouse. This is the number that goes on screen.
       scanned: { rows_read: stats.rows_read, elapsed_s: stats.elapsed },

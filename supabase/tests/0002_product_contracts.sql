@@ -88,6 +88,16 @@ begin
         now()
     from unnest(user_ids) with ordinality as u(id, ordinality);
 
+    begin
+        perform public.form_group(
+            now(), null, 'invalid', 0, null::jsonb,
+            'null-members', 'America/Los_Angeles'
+        );
+        raise exception 'null matching members unexpectedly succeeded';
+    exception when invalid_parameter_value then
+        null;
+    end;
+
     select public.form_group(
         now() + interval '3 days',
         '{"name":"Legacy One","address":"1 Test St"}'::jsonb,
@@ -114,6 +124,13 @@ begin
 
     perform set_config('showup.test.group_one', g1::text, true);
     perform set_config('showup.test.group_two', g2::text, true);
+
+    begin
+        perform public.replace_venue_options(g1, null::jsonb);
+        raise exception 'null venue options unexpectedly succeeded';
+    exception when invalid_parameter_value then
+        null;
+    end;
 
     if (select count(*) from public.member_assignments where group_id = g1) <> 4
        or (select count(distinct target_id)
@@ -157,16 +174,21 @@ begin
        "pitch":"B","score":0.7,"per_member":[0.7,0.6]}
     ]'::jsonb);
 
-    -- Retrieval jobs are retried independently from chat. The database owns the single anchor,
-    -- so replaying persistence before voting may refresh options but must not duplicate the card.
+    -- Retrieval jobs are retried independently from chat. The first committed ballot remains the
+    -- source of truth, and the database owns the single anchor, so a racing retry can neither
+    -- swap choices a member already saw nor duplicate the card.
     perform public.replace_venue_options(g2, '[
-      {"position":1,"venue_id":"two-a","name":"Two A","kind":"bar",
-       "address":"2 A St","locality":"SF","lat":37.7,"lng":-122.4,
+      {"position":1,"venue_id":"retry-a","name":"Retry A","kind":"bar",
+       "address":"9 A St","locality":"SF","lat":37.7,"lng":-122.4,
        "pitch":"A","score":0.8,"per_member":[0.8,0.7]},
-      {"position":2,"venue_id":"two-b","name":"Two B","kind":"museum",
-       "address":"2 B St","locality":"SF","lat":37.8,"lng":-122.3,
+      {"position":2,"venue_id":"retry-b","name":"Retry B","kind":"museum",
+       "address":"9 B St","locality":"SF","lat":37.8,"lng":-122.3,
        "pitch":"B","score":0.7,"per_member":[0.7,0.6]}
     ]'::jsonb);
+    if (select provider_id from public.venue_options
+        where group_id = g2 and position = 1) <> 'two-a' then
+        raise exception 'retrying venue persistence replaced the committed ballot';
+    end if;
     if (select count(*) from public.messages
         where group_id = g2 and kind = 'venue_vote') <> 1 then
         raise exception 'retrying venue persistence duplicated the chat vote anchor';

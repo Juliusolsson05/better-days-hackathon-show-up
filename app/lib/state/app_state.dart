@@ -67,6 +67,23 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Refresh server-owned group facts without replaying the navigation transition.
+  ///
+  /// The final venue ballot updates `groups.chosen_venue_id` inside Postgres. Reloading only the
+  /// group lets every surface observe that decision immediately while leaving the private
+  /// assignment and current phase alone; calling [enterGroup] here would conflate a data refresh
+  /// with entering the room and make future transition side effects run twice.
+  Future<void> refreshGroup() async {
+    final currentId = group?.id;
+    final refreshed = await repo.currentGroup();
+    // A new weekly match can become the repository's newest group while this State still owns a
+    // realtime stream for the previous room. Swapping only the Group object would pair old chat
+    // messages with a new roster; navigation/restoration owns that larger lifecycle transition.
+    if (refreshed == null || refreshed.id != currentId) return;
+    group = refreshed;
+    notifyListeners();
+  }
+
   void goTo(Phase p) {
     phase = p;
     notifyListeners();

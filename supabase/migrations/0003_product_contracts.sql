@@ -155,7 +155,7 @@ declare
     member_count integer;
     stable_formation_key text;
 begin
-    if jsonb_typeof(p_members) <> 'array' then
+    if p_members is null or jsonb_typeof(p_members) <> 'array' then
         raise exception 'members must be a JSON array' using errcode = '22023';
     end if;
 
@@ -346,7 +346,8 @@ create or replace function public.replace_venue_options(grp uuid, options jsonb)
 returns setof public.venue_options
 language plpgsql security definer set search_path = public as $$
 begin
-    if jsonb_typeof(options) <> 'array'
+    if options is null
+       or jsonb_typeof(options) <> 'array'
        or jsonb_array_length(options) not between 2 and 3 then
         raise exception 'venue options must be a JSON array with 2 or 3 entries'
             using errcode = '22023';
@@ -368,7 +369,15 @@ begin
             using errcode = '55000';
     end if;
 
-    delete from public.venue_options where group_id = grp;
+    -- A second worker can finish expensive retrieval while the first one commits. Once the lock
+    -- is acquired, the committed ballot wins unchanged; deleting it here made a retry silently
+    -- swap choices that a member could already be reading. The edge function has a cache fast
+    -- path, but this lock-protected branch is the actual race-safety boundary.
+    if exists (select 1 from public.venue_options where group_id = grp) then
+        return query
+            select * from public.venue_options where group_id = grp order by position;
+        return;
+    end if;
 
     insert into public.venue_options (
         group_id, position, provider_id, name, kind, address, locality,
@@ -484,6 +493,14 @@ create or replace function public.reject_vote_after_venue_finalized()
 returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+    -- Serialize the ballot write before reading the winner. Locking only in the AFTER trigger
+    -- leaves a race where a revote passes this check, waits behind the final ballot, then commits
+    -- after the destination is already announced. The same transaction can safely acquire this
+    -- row again inside finalize_venue_vote().
+    perform 1 from public.groups where id = new.group_id for update;
+    if not found then
+        raise exception 'unknown group %', new.group_id using errcode = '23503';
+    end if;
     if exists (
         select 1 from public.groups
         where id = new.group_id and chosen_venue_id is not null

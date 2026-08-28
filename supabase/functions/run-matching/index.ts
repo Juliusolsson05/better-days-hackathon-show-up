@@ -3,11 +3,11 @@
 // This is the riskiest path in the project and the one that cannot be faked on stage --
 // build and test it before any UI work.
 
-import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
-import { ch, arr, emit } from '../_shared/clickhouse.ts';
-import { planGroup } from '../_shared/claude.ts';
-import { openChat } from '../_shared/chat.ts';
-import { nextSlot } from '../_shared/schedule.ts';
+import { createClient } from "npm:@supabase/supabase-js@2.47.10";
+import { arr, ch, emit } from "../_shared/clickhouse.ts";
+import { planGroup } from "../_shared/claude.ts";
+import { openChat } from "../_shared/chat.ts";
+import { nextSlot } from "../_shared/schedule.ts";
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
 // stranding five people because a sixth could not be found.
@@ -20,21 +20,23 @@ const MAX_GROUP = 6;
 // check below is the real gate; `*` here only lets the reply through, it grants nothing.
 // Mirrors supabase/functions/analytics/index.ts, which does the same for the same reason.
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
-    const auth = req.headers.get('Authorization') ?? '';
-    if (auth !== `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`) {
-      return new Response('forbidden', { status: 403, headers: CORS });
+    const auth = req.headers.get("Authorization") ?? "";
+    if (auth !== `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`) {
+      return new Response("forbidden", { status: 403, headers: CORS });
     }
 
-    const { city = 'SF', slot = 'fri_eve' } = await req.json().catch(() => ({}));
+    const { city = "SF", slot = "fri_eve" } = await req.json().catch(
+      () => ({}),
+    );
     const eventAt = nextSlot(slot);
     // This key is stable for every retry targeting the same city, availability bucket, and
     // actual meetup. It scopes the database's "one user, one group" invariant to a cycle rather
@@ -44,31 +46,39 @@ Deno.serve(async (req) => {
     // Service role: this runs as the system, not as any user, and writes groups for
     // people who are not the caller.
     const db = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: alreadyMatched, error: matchedErr } = await db.from('group_members')
-      .select('user_id')
-      .eq('matching_run_key', runKey);
+    const { data: alreadyMatched, error: matchedErr } = await db.from(
+      "group_members",
+    )
+      .select("user_id")
+      .eq("matching_run_key", runKey);
     if (matchedErr) throw matchedErr;
-    const matchedIds = new Set((alreadyMatched ?? []).map((row) => row.user_id));
+    const matchedIds = new Set(
+      (alreadyMatched ?? []).map((row) => row.user_id),
+    );
 
-    const { data: pool, error: poolErr } = await db.from('profiles')
-      .select('id, display_name, passion, tags')
-      .eq('city', city)
-      .contains('availability', [slot])
-      .not('embedded_at', 'is', null);
+    const { data: pool, error: poolErr } = await db.from("profiles")
+      .select("id, display_name, passion, tags")
+      .eq("city", city)
+      .contains("availability", [slot])
+      .not("embedded_at", "is", null);
     if (poolErr) throw poolErr;
     if (!pool?.length) {
-      return Response.json({ groups: 0, reason: 'empty pool' }, { headers: CORS });
+      return Response.json({ groups: 0, reason: "empty pool" }, {
+        headers: CORS,
+      });
     }
 
     // A restarted sweep must not form a second arrangement from people committed before the
     // crash. The RPC is the final race-proof authority; this filter keeps ordinary retries from
     // wasting Claude calls only to discover the same-run membership constraint at write time.
     const unassigned = new Map(
-      pool.filter((profile) => !matchedIds.has(profile.id)).map((profile) => [profile.id, profile]),
+      pool.filter((profile) => !matchedIds.has(profile.id)).map((
+        profile,
+      ) => [profile.id, profile]),
     );
     const skipped: string[] = [];
     const formed: string[] = [];
@@ -100,7 +110,13 @@ Deno.serve(async (req) => {
       // The stance filter is what makes the README's claim true: the embedding finds the
       // topic neighbourhood, and this keeps someone with the opposite position out of it.
       const { rows, stats } = await ch<
-        { user_id: string; d: number; energy: string; indoor: boolean; tags: string[] }
+        {
+          user_id: string;
+          d: number;
+          energy: string;
+          indoor: boolean;
+          tags: string[];
+        }
       >(
         `SELECT user_id,
                 cosineDistance(embedding, {vec:Array(Float32)}) AS d,
@@ -132,7 +148,9 @@ Deno.serve(async (req) => {
       for (const pass of [1, 2]) {
         for (const cand of rows) {
           if (picked.length >= MAX_GROUP) break;
-          if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) continue;
+          if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) {
+            continue;
+          }
           if (pass === 1 && seenEnergy.has(cand.energy)) continue;
           seenEnergy.add(cand.energy);
           picked.push(cand.user_id);
@@ -147,7 +165,10 @@ Deno.serve(async (req) => {
       const members = picked.map((id) => unassigned.get(id)!);
       const plan = await planGroup(
         members.map((m) => ({
-          user_id: m.id, display_name: m.display_name, passion: m.passion, tags: m.tags,
+          user_id: m.id,
+          display_name: m.display_name,
+          passion: m.passion,
+          tags: m.tags,
         })),
         city,
       );
@@ -156,10 +177,14 @@ Deno.serve(async (req) => {
       // with an FK to profiles means a reformatted or invented id becomes a constraint
       // violation mid-sweep -- validate against the ids we actually sent.
       const byId = new Map(plan.questions.map((q) => [q.user_id, q]));
-      const targets = new Set(plan.questions.map((question) => question.pair_with));
+      const targets = new Set(
+        plan.questions.map((question) => question.pair_with),
+      );
       if (
-        picked.some((id) => !byId.has(id) || !picked.includes(byId.get(id)!.pair_with) ||
-          byId.get(id)!.pair_with === id) || byId.size !== picked.length ||
+        picked.some((id) =>
+          !byId.has(id) || !picked.includes(byId.get(id)!.pair_with) ||
+          byId.get(id)!.pair_with === id
+        ) || byId.size !== picked.length ||
         targets.size !== picked.length
       ) {
         skipped.push(seed);
@@ -173,9 +198,12 @@ Deno.serve(async (req) => {
 
       // Group, membership, private assignments, and RSVPs are one transaction. The former four
       // HTTP writes could fail after exposing a half-built group with no safe way to retry.
-      const { data: groupId, error: gErr } = await db.rpc('form_group', {
+      const { data: groupId, error: gErr } = await db.rpc("form_group", {
         p_event_at: eventAt,
-        p_legacy_venue: plan.venue,
+        // Legacy groups retain their historical JSON venue, but new groups wait for the owned
+        // corpus. Persisting a model-invented name here would create a confident fallback that
+        // can point six people at a place that does not exist.
+        p_legacy_venue: null,
         p_activity: plan.activity,
         p_seed_distance: seedDistance,
         p_members: picked.map((id) => ({
@@ -184,10 +212,12 @@ Deno.serve(async (req) => {
           question: byId.get(id)!.question,
         })),
         p_run_key: runKey,
-        p_event_timezone: 'America/Los_Angeles',
+        p_event_timezone: "America/Los_Angeles",
       });
       if (gErr) throw gErr;
-      if (typeof groupId !== 'string') throw new Error('form_group returned no group id');
+      if (typeof groupId !== "string") {
+        throw new Error("form_group returned no group id");
+      }
 
       // Group formation and the chat opening are the same event per the PRD, so this
       // belongs inside the sweep rather than in a follow-up pass -- there is no moment
@@ -197,18 +227,55 @@ Deno.serve(async (req) => {
       // are already committed at this point, and losing the whole sweep over an opening
       // message would strand everyone matched after this group. An unopened room is
       // recoverable by calling open-chat; a half-finished sweep is not.
+      let chatReady = false;
       try {
-        await openChat(db, groupId, members.map((m) => ({
-          id: m.id, display_name: m.display_name, tags: m.tags ?? [],
-        })));
+        await openChat(
+          db,
+          groupId,
+          members.map((m) => ({
+            id: m.id,
+            display_name: m.display_name,
+            tags: m.tags ?? [],
+          })),
+        );
+        chatReady = true;
       } catch (chatErr) {
-        console.error(`group ${groupId} formed but its chat did not open`, chatErr);
+        console.error(
+          `group ${groupId} formed but its chat did not open`,
+          chatErr,
+        );
+      }
+
+      // Retrieval stays a separately retryable function because ClickHouse, Voyage, and Claude
+      // fail for reasons unrelated to group formation. Invoke it only after the opener: if the
+      // venue anchor arrived first, open_group_chat would correctly see a non-empty room and the
+      // social framing line would never be written.
+      if (chatReady) {
+        try {
+          // This call uses the same service-role client as the matching sweep. pick-venues
+          // intentionally rejects user tokens because otherwise any member could replace the
+          // group's choices before voting begins and make the audit trail meaningless.
+          const { error: venueErr } = await db.functions.invoke("pick-venues", {
+            body: { group_id: groupId, limit: 3 },
+          });
+          if (venueErr) throw venueErr;
+        } catch (venueErr) {
+          console.error(
+            `group ${groupId} formed but venues were not persisted`,
+            venueErr,
+          );
+        }
       }
 
       for (const id of picked) unassigned.delete(id);
-      await Promise.all(picked.map((id) =>
-        emit('group_formed', id, groupId, { seed_distance: seedDistance, size: picked.length })
-      ));
+      await Promise.all(
+        picked.map((id) =>
+          emit("group_formed", id, groupId, {
+            seed_distance: seedDistance,
+            size: picked.length,
+          })
+        ),
+      );
       formed.push(groupId);
     }
 
@@ -221,7 +288,10 @@ Deno.serve(async (req) => {
     }, { headers: CORS });
   } catch (err) {
     console.error(err);
-    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
+    return Response.json({ error: String(err) }, {
+      status: 500,
+      headers: CORS,
+    });
   }
 });
 
@@ -231,15 +301,15 @@ Deno.serve(async (req) => {
  * tag has to. Kept crude on purpose: an explicit opposition table beats an LLM call here.
  */
 const OPPOSED: Record<string, string[]> = {
-  vegan: ['hunting', 'bbq', 'steakhouse'],
-  hunting: ['vegan', 'vegetarian', 'animal_rights'],
-  sober: ['heavy_drinking', 'bar_crawl'],
-  religious: ['militant_atheist'],
+  vegan: ["hunting", "bbq", "steakhouse"],
+  hunting: ["vegan", "vegetarian", "animal_rights"],
+  sober: ["heavy_drinking", "bar_crawl"],
+  religious: ["militant_atheist"],
 };
 function opposingStances(tags: string[]): string[] {
   const out = new Set<string>();
   for (const t of tags) {
-    if (!t.startsWith('stance:')) continue;
+    if (!t.startsWith("stance:")) continue;
     for (const o of OPPOSED[t.slice(7)] ?? []) out.add(`stance:${o}`);
   }
   return [...out];

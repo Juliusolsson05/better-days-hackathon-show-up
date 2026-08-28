@@ -390,23 +390,17 @@ class SupabaseRepository implements Repository {
     String body,
     String clientMsgId,
   ) async {
-    // Both the first attempt and every retry use the same conflict-safe write. A transport
-    // timeout cannot reveal whether Postgres committed, so a plain INSERT on retry turns the
-    // unique key into a user-visible error. DO NOTHING makes the stable client id the protocol:
-    // either this call writes the row or an indistinguishable earlier attempt already did.
-    await _client
-        .from('messages')
-        .upsert(
-          {
-            'group_id': groupId,
-            'user_id': _userId,
-            'body': body,
-            'kind': 'user',
-            'client_msg_id': clientMsgId,
-          },
-          onConflict: 'client_msg_id',
-          ignoreDuplicates: true,
-        );
+    // The database derives author/kind/timestamp, verifies membership, applies the rate limit, and
+    // recognizes an exact client-id replay. Keeping every first attempt and retry on this one RPC
+    // means a modified client cannot bypass those rules through the messages table.
+    await _client.rpc<void>(
+      'send_message',
+      params: messageSubmissionParams(
+        groupId: groupId,
+        clientMsgId: clientMsgId,
+        body: body,
+      ),
+    );
   }
 
   @override
@@ -676,6 +670,15 @@ Map<String, dynamic> reflectionSubmissionParams({
   required String text,
   required bool wasFallback,
 }) => {'grp': groupId, 'reflection_text': text, 'fallback': wasFallback};
+
+/// The public client payload for `send_message` contains no authoritative author metadata.
+/// Postgres owns the user id, message kind, timestamp, membership check, and rate limit.
+@visibleForTesting
+Map<String, dynamic> messageSubmissionParams({
+  required String groupId,
+  required String clientMsgId,
+  required String body,
+}) => {'grp': groupId, 'client_id': clientMsgId, 'message_body': body};
 
 /// RFC 4122 version 4, from the platform CSPRNG.
 ///

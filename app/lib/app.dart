@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -26,9 +27,12 @@ class _ShowUpAppState extends State<ShowUpApp> {
   /// and needs no cloud project.
   static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
 
-  late final Repository _repo =
-      _useSupabase ? SupabaseRepository(Supabase.instance.client) : MockRepository();
+  late final Repository _repo = _useSupabase
+      ? SupabaseRepository(Supabase.instance.client)
+      : MockRepository();
   late final AppState _state = AppState(_repo, initialPhase: _initialPhase());
+  bool _restoring = _useSupabase;
+  Object? _restoreError;
 
   Phase _initialPhase() {
     if (!_useSupabase) return Phase.onboarding;
@@ -43,6 +47,21 @@ class _ShowUpAppState extends State<ShowUpApp> {
   void initState() {
     super.initState();
     _repo.signIn();
+    if (_useSupabase) _restore();
+  }
+
+  Future<void> _restore() async {
+    setState(() {
+      _restoring = true;
+      _restoreError = null;
+    });
+    try {
+      await _state.restore();
+    } catch (error) {
+      if (mounted) _restoreError = error;
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
   }
 
   @override
@@ -60,18 +79,58 @@ class _ShowUpAppState extends State<ShowUpApp> {
       theme: buildTheme(),
       home: ListenableBuilder(
         listenable: _state,
-        builder: (context, _) => Stack(children: [
-          switch (_state.phase) {
-            Phase.auth       => AuthScreen(_state),
-            Phase.onboarding => OnboardingScreen(_state),
-            Phase.waiting    => WaitingScreen(_state),
-            Phase.matched ||
-            Phase.during     => GroupChatScreen(_state),
-            Phase.after      => AfterFlow(_state),
-            Phase.contacts   => ContactsScreen(_state),
-          },
-          _DevJump(_state),
-        ]),
+        builder: (context, _) {
+          if (_restoring) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (_restoreError != null) {
+            return Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'We could not restore your place yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: _restore,
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+          return Stack(
+            children: [
+              switch (_state.phase) {
+                Phase.auth => AuthScreen(_state),
+                Phase.onboarding => OnboardingScreen(_state),
+                Phase.waiting => WaitingScreen(_state),
+                Phase.matched || Phase.during => GroupChatScreen(_state),
+                Phase.after => AfterFlow(_state),
+                Phase.contacts => ContactsScreen(_state),
+              },
+              // Demo controls are useful for a three-day flow, but release users must never be able
+              // to manufacture impossible client-only phases. A named define keeps rehearsal builds
+              // available without conflating them with production behavior.
+              if (kDebugMode ||
+                  const bool.fromEnvironment('SHOW_DEMO_CONTROLS'))
+                _DevJump(_state),
+            ],
+          );
+        },
       ),
     );
   }
@@ -95,16 +154,18 @@ class _DevJump extends StatelessWidget {
         child: PopupMenuButton<Phase>(
           tooltip: 'Jump to step',
           icon: const CircleAvatar(
-            radius: 18, backgroundColor: Colors.white12,
+            radius: 18,
+            backgroundColor: Colors.white12,
             child: Icon(Icons.fast_forward, size: 18, color: Colors.white54),
           ),
           onSelected: (p) async {
             if (p == Phase.matched && state.group == null) {
               // Mock: fabricate a group. Real backend: just fetch whatever run-matching
-              // has already written for this user.
-              if (state.repo is MockRepository) {
-                (state.repo as MockRepository).formGroup();
-              }
+              // has already written for this user. Keep the type guard here because a
+              // release-like Supabase rehearsal must never mutate server state through
+              // a control that only exists to compress the three-day demo timeline.
+              final repo = state.repo;
+              if (repo is MockRepository) repo.formGroup();
               await state.enterGroup();
               return;
             }
@@ -113,10 +174,16 @@ class _DevJump extends StatelessWidget {
           },
           itemBuilder: (_) => const [
             PopupMenuItem(value: Phase.onboarding, child: Text('1 · Signup')),
-            PopupMenuItem(value: Phase.waiting,    child: Text('2 · Waiting')),
-            PopupMenuItem(value: Phase.matched,    child: Text('3 · Group chat + vote')),
-            PopupMenuItem(value: Phase.after,      child: Text('4 · After the meetup')),
-            PopupMenuItem(value: Phase.contacts,   child: Text('5 · Numbers')),
+            PopupMenuItem(value: Phase.waiting, child: Text('2 · Waiting')),
+            PopupMenuItem(
+              value: Phase.matched,
+              child: Text('3 · Group chat + vote'),
+            ),
+            PopupMenuItem(
+              value: Phase.after,
+              child: Text('4 · After the meetup'),
+            ),
+            PopupMenuItem(value: Phase.contacts, child: Text('5 · Numbers')),
           ],
         ),
       ),

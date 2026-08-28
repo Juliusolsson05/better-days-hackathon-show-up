@@ -44,10 +44,12 @@ export default function DeckPage() {
       <Slide>
         <p className="eyebrow">{site.city}</p>
         <h1 className="display mt-8 text-6xl sm:text-8xl">{site.name}</h1>
-        <p className="display mt-6 text-3xl text-ink-deep sm:text-5xl">{site.tagline}</p>
+        <p className="display mt-6 max-w-4xl text-3xl text-ink-deep sm:text-5xl">
+          A safe place to meet like-minded people.
+        </p>
         <p className="mt-12 max-w-xl text-lg text-muted">
-          Small groups of solo attendees, matched on what they actually care about, meeting
-          in person.
+          Automatically paired with a small group of brand-new faces who are into the same
+          things you are. Everyone comes alone.
         </p>
       </Slide>
 

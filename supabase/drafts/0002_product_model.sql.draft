@@ -2,36 +2,32 @@
 -- DRAFT -- NOT APPLIED, NOT AGREED
 --
 -- Deliberately kept OUT of supabase/migrations/ so `supabase db push` cannot pick
--- it up. This is a proposal for how the PRD's product rules map onto tables, not a
--- decision. The data model is still being worked out; revisit before applying.
+-- it up. This is a proposal for how the PRD's venue-voting rules map onto tables.
 --
--- To promote it: settle the model, move it to supabase/migrations/0002_*.sql,
--- drop this banner, then `supabase db push`.
+-- The post-meetup half of this draft (attendance_votes, contact_selections,
+-- profiles.phone, reflections.was_fallback, dropping number_shares) has been promoted
+-- to supabase/migrations/0002_after_meetup.sql. What remains here is venue voting plus
+-- two small schema fixes, which belong with feat/venue-pipeline.
+--
+-- >>> When this is promoted it MUST be 0003_*.sql, not 0002 -- 0002 is taken, and two
+-- >>> files with the same version make `supabase db push` reject the whole set. <<<
 --
 -- Open questions to settle first:
 --   * Do groups reshuffle by dropping and reforming, or do they carry history?
 --     That decides whether group_id is stable across meetups.
---   * Does the phone number live on profiles, or per-group so it can differ?
---   * Is attendance a group vote at all, or should it come from the doorway
---     notification being tapped? The vote is more social and more work.
 --   * venue_options assumes exactly 2-3 rows per group -- fine if venue retrieval
 --     always returns three, wrong if events supply and it sometimes returns one.
 -- ============================================================================
 
--- Brings the schema in line with the PRD in README.md. Three product rules here are not
--- access control dressed up as policy -- they are the product, and each one is only real
--- if the database enforces it.
---
---   1. Venue voting is anonymous: the tally is public to the group, the ballots are not.
---   2. Contact exchange is mutual: a number appears only when both people chose each other.
---   3. Being unselected is invisible: nobody can tell who did or did not pick them.
---
--- If the client decides any of these, the data has already reached the device.
+-- Venue voting is anonymous: the tally is public to the group, the ballots are not.
+-- If the client decides that, the ballots have already reached the device.
 
 -- ---------------------------------------------------------------------------
--- Groups are 4 to 6, and the distance metric is named for what it measures
+-- Name the distance metric for what it measures
 -- ---------------------------------------------------------------------------
 
+-- run-matching still writes `cohesion`; renaming means updating that function in the
+-- same change, which is why this sits with the venue work rather than 0002_after_meetup.
 alter table groups rename column cohesion to seed_distance;
 comment on column groups.seed_distance is
     'Mean cosine distance from the seed member to the rest. A star metric, not a clique '
@@ -64,53 +60,8 @@ create table venue_votes (
     primary key (group_id, user_id)   -- one vote each, changeable by upsert
 );
 
--- ---------------------------------------------------------------------------
--- Post-meetup: attendance, reflection, contact exchange
--- ---------------------------------------------------------------------------
-
--- Attendance is the group's account of who showed up, not a check-in. Per the PRD a
--- no-show carries no penalty; this exists so the funnel has a truthful 'attended' signal.
-create table attendance_votes (
-    group_id   uuid not null references groups on delete cascade,
-    voter_id   uuid not null references profiles on delete cascade,
-    subject_id uuid not null references profiles on delete cascade,
-    showed_up  boolean not null,
-    primary key (group_id, voter_id, subject_id),
-    check (voter_id <> subject_id)
-);
-
--- Replaces number_shares. The PRD moved from "share and see everyone who shared" to
--- mutual selection, which is a different privacy model: under the old rule, sharing
--- revealed you to people who had not chosen you.
-create table contact_selections (
-    group_id    uuid not null references groups on delete cascade,
-    selector_id uuid not null references profiles on delete cascade,
-    selected_id uuid not null references profiles on delete cascade,
-    created_at  timestamptz not null default now(),
-    primary key (group_id, selector_id, selected_id),
-    check (selector_id <> selected_id)
-);
-
-drop table if exists number_shares;
-
--- The number lives on the profile and is never selectable by another user directly --
--- it is only ever returned through mutual_contacts() below.
-alter table profiles add column if not exists phone text;
--- PRD: photo is required. Existing rows predate the rule, so this is not NOT NULL yet.
-comment on column profiles.photo_url is 'Required at signup per the PRD; enforced in onboarding.';
-
--- Reflection now records the fallback case the PRD describes: if your assigned target did
--- not show, you answer about someone else instead.
-alter table reflections add column if not exists was_fallback boolean not null default false;
-
-alter table venue_options      enable row level security;
-alter table venue_votes        enable row level security;
-alter table attendance_votes   enable row level security;
-alter table contact_selections enable row level security;
-
--- ---------------------------------------------------------------------------
--- Policies
--- ---------------------------------------------------------------------------
+alter table venue_options enable row level security;
+alter table venue_votes   enable row level security;
 
 create policy "read own group venue options" on venue_options for select
     using (group_id in (select my_group_ids()));
@@ -123,29 +74,9 @@ create policy "cast own vote" on venue_votes for all
     using (user_id = auth.uid())
     with check (user_id = auth.uid() and group_id in (select my_group_ids()));
 
--- Same shape: your own ballots only. The result is read through attendance_result().
-create policy "read own attendance votes" on attendance_votes for select
-    using (voter_id = auth.uid());
-create policy "cast own attendance votes" on attendance_votes for all
-    using (voter_id = auth.uid())
-    with check (voter_id = auth.uid() and group_id in (select my_group_ids()));
-
--- THE invisibility rule. You can see who you picked. You can never see who picked you,
--- because that would make being unselected inferable by elimination.
-create policy "read own selections" on contact_selections for select
-    using (selector_id = auth.uid());
-create policy "make own selections" on contact_selections for all
-    using (selector_id = auth.uid())
-    with check (selector_id = auth.uid() and group_id in (select my_group_ids()));
-
--- ---------------------------------------------------------------------------
--- The three functions that expose aggregates without exposing ballots
--- ---------------------------------------------------------------------------
-
 -- Anonymous tally. security definer so it can count rows the caller cannot select.
--- Returns only counts, so no ballot is recoverable from the result -- with one caveat:
--- in a group of 4-6 a unanimous tally does reveal how everyone voted. That is inherent
--- to small-group voting and not something a policy can fix.
+-- In a group of 4-6 a unanimous tally does reveal how everyone voted -- inherent to
+-- small-group voting, not something a policy can fix.
 create or replace function public.venue_tally(grp uuid)
 returns table (option_id uuid, votes bigint)
 language sql stable security definer set search_path = public as $$
@@ -156,34 +87,6 @@ language sql stable security definer set search_path = public as $$
       and exists (select 1 from group_members m
                   where m.group_id = grp and m.user_id = auth.uid())
     group by o.id;
-$$;
-
-create or replace function public.attendance_result(grp uuid)
-returns table (subject_id uuid, showed_up bigint, total bigint)
-language sql stable security definer set search_path = public as $$
-    select a.subject_id, count(*) filter (where a.showed_up), count(*)
-    from attendance_votes a
-    where a.group_id = grp
-      and exists (select 1 from group_members m
-                  where m.group_id = grp and m.user_id = auth.uid())
-    group by a.subject_id;
-$$;
-
--- The payoff. Returns a number only where the selection went both ways. Nothing in this
--- result set distinguishes "did not pick me" from "was not in the group" -- the caller
--- learns only about reciprocated choices, which is exactly the PRD rule.
-create or replace function public.mutual_contacts(grp uuid)
-returns table (user_id uuid, display_name text, photo_url text, phone text)
-language sql stable security definer set search_path = public as $$
-    select p.id, p.display_name, p.photo_url, p.phone
-    from contact_selections mine
-    join contact_selections theirs
-      on theirs.group_id  = mine.group_id
-     and theirs.selector_id = mine.selected_id
-     and theirs.selected_id = mine.selector_id
-    join profiles p on p.id = mine.selected_id
-    where mine.group_id = grp
-      and mine.selector_id = auth.uid();
 $$;
 
 alter publication supabase_realtime add table venue_votes;

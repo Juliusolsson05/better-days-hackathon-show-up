@@ -1,3 +1,23 @@
+-- ============================================================================
+-- DRAFT -- NOT APPLIED, NOT AGREED
+--
+-- Deliberately kept OUT of supabase/migrations/ so `supabase db push` cannot pick
+-- it up. This is a proposal for how the PRD's product rules map onto tables, not a
+-- decision. The data model is still being worked out; revisit before applying.
+--
+-- To promote it: settle the model, move it to supabase/migrations/0002_*.sql,
+-- drop this banner, then `supabase db push`.
+--
+-- Open questions to settle first:
+--   * Do groups reshuffle by dropping and reforming, or do they carry history?
+--     That decides whether group_id is stable across meetups.
+--   * Does the phone number live on profiles, or per-group so it can differ?
+--   * Is attendance a group vote at all, or should it come from the doorway
+--     notification being tapped? The vote is more social and more work.
+--   * venue_options assumes exactly 2-3 rows per group -- fine if venue retrieval
+--     always returns three, wrong if events supply and it sometimes returns one.
+-- ============================================================================
+
 -- Brings the schema in line with the PRD in README.md. Three product rules here are not
 -- access control dressed up as policy -- they are the product, and each one is only real
 -- if the database enforces it.

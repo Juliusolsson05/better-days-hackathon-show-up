@@ -139,7 +139,9 @@ Deno.serve(async (req) => {
         event_at: nextSlot(slot),
         venue: plan.venue,
         activity: plan.activity,
-        seed_distance: seedDistance,
+        // Column is still named cohesion in the applied schema; the draft renames it
+        // to seed_distance, which is what it actually measures.
+        cohesion: seedDistance,
       }).select('id').single();
       if (gErr) throw gErr;
 

@@ -144,15 +144,18 @@ the embedding is the recall step, the tags Claude extracts are the precision ste
 
 ## Implementation deltas
 
-`0002_product_model.sql` brings the schema to the PRD. What remains:
+The PRD above supersedes the earlier spec. A **draft** schema for the new rules sits at
+`supabase/drafts/0002_product_model.sql.draft` -- deliberately outside `migrations/` so it
+cannot be applied by accident. The data model is not settled; the draft lists the open
+questions. Current state:
 
 | PRD says | State | Where |
 |---|---|---|
 | Groups of **4 to 6** | done | `run-matching` `MIN_GROUP`/`MAX_GROUP` |
-| App posts **2-3 venue options**, group votes **anonymously** | schema done, needs the Claude call + chat UI | `venue_options`, `venue_votes`, `venue_tally()` |
-| Contact exchange on **mutual selection**, unselected is invisible | done | `contact_selections`, `mutual_contacts()` |
-| Attendance from the **group's votes** | schema done, needs UI | `attendance_votes`, `attendance_result()` |
-| Photo **required**, faces are the point | schema ready, onboarding must enforce | `profiles.photo_url` |
+| App posts **2-3 venue options**, group votes **anonymously** | schema drafted | draft: `venue_options`, `venue_votes`, `venue_tally()` |
+| Contact exchange on **mutual selection**, unselected is invisible | schema drafted | draft: `contact_selections`, `mutual_contacts()` |
+| Attendance from the **group's votes** | schema drafted | draft: `attendance_votes`, `attendance_result()` |
+| Photo **required**, faces are the point | schema drafted | draft: `profiles.photo_url` not-null |
 | Group chat opens **at formation**, is the only surface | not built | `app/lib/features/` |
 | No standalone profile page | not built - keep it that way | - |
 | Groups **reshuffle** each meetup | not built | `run-matching` |

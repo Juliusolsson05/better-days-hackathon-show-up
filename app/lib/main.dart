@@ -38,6 +38,10 @@ Future<void> main() async {
     // error costs far more than the quota does.
     options.tracesSampleRate = 1.0;
     options.attachScreenshot = true;
+    // Sentry still marks hierarchy capture experimental even though it is the only practical
+    // way to diagnose a release-only layout failure on an unattached demo phone. Keep the
+    // suppression at the call site so a future stable SDK forces us to reconsider this choice.
+    // ignore: experimental_member_use
     options.attachViewHierarchy = true;
   }, appRunner: _boot);
 }

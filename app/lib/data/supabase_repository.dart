@@ -7,11 +7,11 @@ import 'repository.dart';
 
 /// Real backend. Implements the same [Repository] contract as MockRepository.
 ///
-/// Wired against the 0001 schema: signup (email OTP + photo + `submit-profile`), the
-/// live group chat, and the private question. Venue voting, attendance, and contact
-/// exchange still throw [_notWired] -- their tables live in the 0002 draft
-/// (`supabase/drafts/0002_product_model.sql.draft`) and, for venue, in Julius's
-/// `feat/venue-pipeline`. Wire them here as each lands; nothing else in the app changes.
+/// Wired: signup (email OTP + photo + `submit-profile`), the live group chat, the
+/// private question (all on 0001), and the whole after-meetup flow -- reflection,
+/// attendance, contact exchange (on 0002_after_meetup). The only methods still throwing
+/// [_notWired] are venue voting; its tables are in the draft and its retrieval pipeline
+/// is Julius's `feat/venue-pipeline`.
 class SupabaseRepository implements Repository {
   SupabaseRepository(this._client);
 
@@ -105,9 +105,9 @@ class SupabaseRepository implements Repository {
   }
 
   Never _notWired(String method) => throw UnimplementedError(
-        'SupabaseRepository.$method is not wired yet -- its tables are in the 0002 draft '
-        '(and, for venue, in feat/venue-pipeline). Run the after-meetup flow against '
-        'MockRepository until then.',
+        'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
+        'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
+        'Run the venue vote against MockRepository until then.',
       );
 
   String get _uid {
@@ -124,21 +124,28 @@ class SupabaseRepository implements Repository {
   Future<Map<String, Member>> _members(String groupId) async {
     final cached = _memberCache[groupId];
     if (cached != null) return cached;
+    final uid = _uid;
     final rows = await _client
         .from('group_members')
         .select('user_id, profiles(display_name, photo_url, tags)')
         .eq('group_id', groupId);
+    // Keyed by the real user_id so _messageFrom can always resolve an author. The Member
+    // objects, though, carry id 'me' for the current user -- the mock uses that sentinel
+    // (MockRepository.formGroup) and so do the screens: after_flow and group_info both do
+    // `where((m) => m.id != 'me')` to list "everyone else". Without this the current user
+    // shows up in their own attendance and contact lists.
     final map = {
-      for (final r in rows) r['user_id'] as String: _memberFrom(r),
+      for (final r in rows)
+        r['user_id'] as String: _memberFrom(r, isMe: r['user_id'] == uid),
     };
     _memberCache[groupId] = map;
     return map;
   }
 
-  Member _memberFrom(Map<String, dynamic> row) {
+  Member _memberFrom(Map<String, dynamic> row, {required bool isMe}) {
     final p = (row['profiles'] as Map<String, dynamic>?) ?? const {};
     return Member(
-      id: row['user_id'] as String,
+      id: isMe ? 'me' : row['user_id'] as String,
       displayName: (p['display_name'] as String?) ?? 'Someone',
       avatar: (p['photo_url'] as String?) ?? '',
       tags: ((p['tags'] as List?) ?? const []).cast<String>(),
@@ -263,18 +270,83 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitReflection(String groupId, String text, {bool wasFallback = false}) async =>
-      _notWired('submitReflection');
+  Future<void> submitReflection(String groupId, String text,
+      {bool wasFallback = false}) async {
+    // reflections.about_user is NOT NULL. Normally it is your assigned pair. In the
+    // fallback case the UI never asks *who* you learned about instead, so we still store
+    // the assigned pair and let was_fallback record that the content is really about the
+    // group. Giving the fallback a real subject would need a UI change.
+    final me = await _client
+        .from('group_members')
+        .select('pair_with')
+        .eq('group_id', groupId)
+        .eq('user_id', _uid)
+        .single();
+    final aboutUser = (me['pair_with'] as String?) ?? _uid;
+
+    // Upsert on the (group_id, user_id) primary key: running the flow twice edits your
+    // reflection rather than failing.
+    await _client.from('reflections').upsert({
+      'group_id': groupId,
+      'user_id': _uid,
+      'about_user': aboutUser,
+      'what_stuck': text,
+      'was_fallback': wasFallback,
+    }, onConflict: 'group_id,user_id');
+  }
 
   @override
-  Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) async =>
-      _notWired('submitAttendance');
+  Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) async {
+    if (showedUp.isEmpty) return;
+    // One row per (me, subject). CHECK (voter_id <> subject_id) holds because the UI
+    // builds this map from "everyone else" -- and _members() gives the current user id
+    // 'me', so they are excluded even against the real backend.
+    final rows = [
+      for (final e in showedUp.entries)
+        {
+          'group_id': groupId,
+          'voter_id': _uid,
+          'subject_id': e.key,
+          'showed_up': e.value,
+        },
+    ];
+    await _client
+        .from('attendance_votes')
+        .upsert(rows, onConflict: 'group_id,voter_id,subject_id');
+  }
 
   @override
-  Future<void> selectContacts(String groupId, Set<String> selectedIds) async =>
-      _notWired('selectContacts');
+  Future<void> selectContacts(String groupId, Set<String> selectedIds) async {
+    // Replace rather than accrete: wipe my picks for this group, then insert the current
+    // set. The UI has no un-pick-and-resubmit path, but the demo re-runs the flow, and
+    // "your latest choice wins" is the least surprising behaviour. contact_selections is
+    // insert/select only for the caller (RLS), so a delete of one's own rows is allowed.
+    await _client
+        .from('contact_selections')
+        .delete()
+        .eq('group_id', groupId)
+        .eq('selector_id', _uid);
+    if (selectedIds.isEmpty) return;
+    await _client.from('contact_selections').insert([
+      for (final id in selectedIds)
+        {'group_id': groupId, 'selector_id': _uid, 'selected_id': id},
+    ]);
+  }
 
   @override
-  Future<List<MutualContact>> mutualContacts(String groupId) async =>
-      _notWired('mutualContacts');
+  Future<List<MutualContact>> mutualContacts(String groupId) async {
+    // The reciprocity + invisibility rules live entirely in this function (see
+    // 0002_after_meetup.sql): it returns a row only for a pick that went both ways, and
+    // nothing here separates "did not pick me" from "was not in the group".
+    final rows = await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
+    return [
+      for (final r in rows.cast<Map<String, dynamic>>())
+        MutualContact(
+          id: r['user_id'] as String,
+          displayName: (r['display_name'] as String?) ?? 'Someone',
+          avatar: (r['photo_url'] as String?) ?? '',
+          phone: (r['phone'] as String?) ?? '',
+        ),
+    ];
+  }
 }

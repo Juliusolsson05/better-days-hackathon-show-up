@@ -69,7 +69,10 @@ class _AfterFlowState extends State<AfterFlow> {
 
   Widget _reflection() {
     final a = widget.state.assignment;
-    return ListView(padding: const EdgeInsets.all(20), children: [
+    return ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.all(20),
+        children: [
       Text(
         _fallback
             ? 'No problem. What did you learn about anyone else?'
@@ -95,7 +98,10 @@ class _AfterFlowState extends State<AfterFlow> {
   }
 
   Widget _attendance() {
-    return ListView(padding: const EdgeInsets.all(20), children: [
+    return ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.all(20),
+        children: [
       const Text('Who made it?',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
@@ -115,7 +121,10 @@ class _AfterFlowState extends State<AfterFlow> {
   }
 
   Widget _contacts() {
-    return ListView(padding: const EdgeInsets.all(20), children: [
+    return ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.all(20),
+        children: [
       const Text('Swap numbers with anyone?',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),

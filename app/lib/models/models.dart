@@ -44,13 +44,22 @@ class VenueOption {
   final String address;
   final String pitch; // one line, written for this group
   final List<String> categories;
+  // Nullable because a venue is still showable without them -- the map degrades to the
+  // address rather than the screen failing. Both come straight from the pick-venues
+  // response, which carries them for every option.
+  final double? lat;
+  final double? lng;
   const VenueOption({
     required this.id,
     required this.name,
     required this.address,
     required this.pitch,
     required this.categories,
+    this.lat,
+    this.lng,
   });
+
+  bool get hasLocation => lat != null && lng != null;
 }
 
 class Group {

@@ -69,6 +69,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               final msgs = snap.data ?? const <Message>[];
               _toBottom();
               return ListView.builder(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 itemCount: msgs.length,

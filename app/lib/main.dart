@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
 
@@ -8,11 +9,19 @@ import 'app.dart';
 /// a fork does not silently report into our project.
 const _dsn = String.fromEnvironment('SENTRY_DSN');
 
-void main() async {
+/// Pass --dart-define=USE_SUPABASE=true to run against the real backend, together with
+/// --dart-define=SUPABASE_URL=... and --dart-define=SUPABASE_ANON_KEY=... . Without the
+/// flag the app runs entirely on MockRepository and never touches Supabase.
+const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
+const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+
+Future<void> main() async {
   if (_dsn.isEmpty) {
     // No DSN configured: run normally rather than crashing on startup. Local dev and CI
     // should not require a Sentry project to exist.
-    return runApp(const ShowUpApp());
+    await _boot();
+    return;
   }
 
   await SentryFlutter.init(
@@ -29,6 +38,20 @@ void main() async {
       options.attachScreenshot = true;
       options.attachViewHierarchy = true;
     },
-    appRunner: () => runApp(const ShowUpApp()),
+    appRunner: _boot,
   );
+}
+
+/// Initialises Supabase when the real-backend flag is set, then starts the app. Shared by
+/// the Sentry and no-Sentry paths so the swap behaves the same either way.
+Future<void> _boot() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (_useSupabase) {
+    assert(
+      _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,
+      'USE_SUPABASE=true needs SUPABASE_URL and SUPABASE_ANON_KEY dart-defines',
+    );
+    await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+  }
+  runApp(const ShowUpApp());
 }

@@ -117,13 +117,22 @@ class AppState extends ChangeNotifier {
   /// spans three days and is otherwise impossible to demo.
   Future<void> armLadder({bool demo = false}) async {
     if (group == null) return;
-    notificationsEnabled = await NotificationService.instance
-        .requestPermission();
-    if (notificationsEnabled != true) {
-      notifyListeners();
-      return;
+    try {
+      notificationsEnabled = await NotificationService.instance
+          .requestPermission();
+      if (notificationsEnabled == true) {
+        await NotificationService.instance.scheduleLadder(group!, demo: demo);
+      }
+    } catch (error, stack) {
+      // enterGroup() fires this unawaited, so anything that escapes here becomes an
+      // uncaught async error -- it aborts the running widget test, and on a device it
+      // would be a silent crash on the path into the group chat. A phone where the
+      // notification plugin is missing or unregistered must still reach the room; the
+      // ladder is the product's spine between matching and the event, but it is not
+      // load-bearing for navigation. Treat any failure as "no ladder".
+      notificationsEnabled = false;
+      debugPrint('[ladder] arm failed, continuing without it: $error\n$stack');
     }
-    await NotificationService.instance.scheduleLadder(group!, demo: demo);
     notifyListeners();
   }
 

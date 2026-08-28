@@ -43,29 +43,42 @@ BBOX = (-122.52, -122.35, 37.70, 37.83)  # xmin, xmax, ymin, ymax
 
 # Somewhere six strangers could plausibly spend an evening.
 #
-# This allowlist exists because the corpus is overwhelmingly not that: of ~37k open SF places,
-# the largest categories are health_care, personal_or_beauty_service, attorney_or_law_firm and
-# dental_clinic. Only ~6.7k are social. Matched as substrings so the cuisine taxonomy
-# (sushi_restaurant, thai_restaurant, ...) is covered by the single token "restaurant".
-SOCIAL_TOKENS = (
-    "restaurant", "bar", "cafe", "coffee", "brewery", "brewpub", "pub", "bistro",
-    "bakery", "eatery", "diner", "pizzeria", "creamery", "tea_house", "winery",
-    "music_venue", "night_club", "arcade", "bowling", "billiards", "karaoke",
-    "climbing", "gym", "yoga", "dance", "pottery", "art_gallery", "museum",
-    "movie_theater", "theater", "comedy_club", "park", "garden", "bookstore",
-    "board_game", "escape_room", "mini_golf", "aquarium", "zoo",
-)
-
-# Not social despite matching a token above -- "bar" catches barber and barbershop, "gym"
-# catches gymnastics_school, and a hospital cafe is not an evening out.
-SOCIAL_EXCLUDE = ("barber", "sushi_bar_supply", "gymnastics", "juice_bar", "hookah")
+# This is an EXACT allowlist, read off the real taxonomy, not a substring match. Substring
+# matching was tried first and was wrong in both directions: "garden" admitted
+# nursery_and_gardening_store, "gym" admitted every Bushido Fitness Center, "dance" admitted
+# a children's ballet academy, while performing_arts_venue and social_club were missed
+# entirely. The corpus is overwhelmingly not social -- of ~37k open SF places the largest
+# categories are health_care, hair_salon and doctors_office -- so precision matters more
+# than recall here.
+SOCIAL_TAXONOMIES = frozenset({
+    # drink
+    "bar", "cocktail_bar", "wine_bar", "sports_bar", "gay_bar", "dive_bar", "beer_bar",
+    "tapas_bar", "pub", "irish_pub", "gastropub", "brewery", "brewpub", "taproom",
+    "winery", "distillery", "lounge", "speakeasy",
+    # coffee and sweet
+    "coffee_shop", "cafe", "tea_room", "bubble_tea_shop", "ice_cream_shop", "dessert_shop",
+    "bakery", "creamery", "juice_bar",
+    # eat (the cuisine family is handled by the _restaurant suffix rule below)
+    "restaurant", "sandwich_shop", "delicatessen", "food_hall", "steakhouse", "diner",
+    # do
+    "music_venue", "theatre_venue", "performing_arts_venue", "comedy_club", "movie_theater",
+    "cinema", "dance_club", "night_club", "karaoke_bar", "arcade", "bowling_alley",
+    "billiards", "escape_room", "mini_golf", "climbing_gym", "bouldering_gym",
+    "pottery_studio", "board_game_cafe",
+    # look
+    "art_gallery", "museum", "art_museum", "history_museum", "science_museum", "aquarium",
+    "zoo", "botanical_garden", "bookstore",
+    # outdoors and gather
+    "park", "public_plaza", "beach", "social_club", "event_venue",
+})
 
 
 def is_social(taxonomy: str | None, basic: str | None) -> bool:
+    """Exact match, plus a suffix rule so every cuisine (sushi_, thai_, ...) is covered."""
     label = (taxonomy or basic or "").lower()
-    if not label or any(x in label for x in SOCIAL_EXCLUDE):
+    if not label:
         return False
-    return any(tok in label for tok in SOCIAL_TOKENS)
+    return label in SOCIAL_TAXONOMIES or label.endswith("_restaurant")
 
 
 def extract():
@@ -108,17 +121,33 @@ def extract():
     return out
 
 
+# Overture's `locality` is city-level, not neighbourhood-level: 8,292 of 8,394 SF social
+# venues carry the literal string "San Francisco", with the rest being case and formatting
+# variants of it. Normalised here for display only -- see document() for why it is kept out
+# of the embedded text.
+_SF_VARIANTS = {"sf", "san francisco", "san francisco, ca", "san francisco, ca, us"}
+
+
+def clean_locality(raw: str) -> str:
+    s = (raw or "").strip()
+    return "San Francisco" if s.lower() in _SF_VARIANTS or not s else s
+
+
 def document(v: dict) -> str:
     """The text that gets embedded.
 
-    Name alone is nearly signal-free -- "Kinship" tells you nothing -- so the category carries
-    most of the meaning. taxonomy_primary is used in preference to basic_category because
-    basic_category collapses every cocktail bar, wine bar and dive bar in the city into the
-    single token "bar", which would make them indistinguishable in the vector space.
+    Name plus category, and deliberately nothing else. Name alone is nearly signal-free --
+    "Kinship" tells you nothing -- so the category carries most of the meaning, and
+    taxonomy_primary is used over basic_category because basic_category collapses every
+    cocktail bar, wine bar and dive bar in the city into the single token "bar".
+
+    The neighbourhood is deliberately NOT included. It reads like useful context, but
+    Overture's locality is city-level: it is the same string for 98.8% of this corpus, so it
+    adds no way to tell two venues apart while contributing an identical component to every
+    vector -- which is the shared-offset anisotropy the pipeline works to avoid elsewhere.
     """
     kind = (v["taxonomy_primary"] or v["basic_category"] or "venue").replace("_", " ")
-    where = v["locality"] or "San Francisco"
-    return f"{v['name']}\nCategory: {kind}\nNeighborhood: {where}"
+    return f"{v['name']}\nCategory: {kind}"
 
 
 def embed(texts):
@@ -186,7 +215,7 @@ def main():
             "taxonomy_primary": v["taxonomy_primary"] or "",
             "basic_category": v["basic_category"] or "",
             "address": v["address"],
-            "locality": v["locality"],
+            "locality": clean_locality(v["locality"]),
             "lat": v["lat"],
             "lng": v["lng"],
             "confidence": v["confidence"],

@@ -16,3 +16,7 @@ supabase/.temp
 
 # Agent worktrees are checkouts of this repo, not content of it
 .claude/
+
+# Venue ingestion creates local Python bytecode; only source and corpus inputs belong here.
+__pycache__/
+*.pyc

@@ -255,31 +255,34 @@ class ScreenIntro extends StatelessWidget {
   );
 }
 
-/// A round avatar. [source] is either an emoji (the mock's convention), a short bit of
-/// text to show as-is, or an http(s) URL. Emoji are retained because they are selected by
-/// users as chat identity, not added as decorative interface chrome.
+/// A round avatar keeps the durable emoji separate from the short-lived private photo URL.
+/// Signed storage URLs expire, whereas the emoji is safe to cache and remains a recognizable
+/// fallback. Treating one string as both values made an expired URL indistinguishable from a
+/// real avatar choice and left reopened group screens full of broken-image placeholders.
 class Avatar extends StatelessWidget {
-  final String source;
+  final String emoji;
   final double size;
-  const Avatar(this.source, {super.key, this.size = 40});
-
-  bool get _isUrl =>
-      source.startsWith('http://') || source.startsWith('https://');
+  final String? imageUrl;
+  const Avatar(this.emoji, {super.key, this.size = 40, this.imageUrl});
 
   @override
   Widget build(BuildContext context) {
-    if (_isUrl) {
-      return ClipOval(
-        child: Image.network(
-          source,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => _glyph('🙂'),
-        ),
-      );
-    }
-    return _glyph(source.isEmpty ? '🙂' : source);
+    final fallback = _glyph(emoji.isEmpty ? '🙂' : emoji);
+
+    // Profile photos are private signed URLs and therefore expire. `errorBuilder` is not a
+    // decorative fallback: without it, a group reopened after expiry replaces every person
+    // with a broken-image icon until the whole group is fetched again.
+    return ClipOval(
+      child: imageUrl == null
+          ? fallback
+          : Image.network(
+              imageUrl!,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => fallback,
+            ),
+    );
   }
 
   Widget _glyph(String text) => Container(

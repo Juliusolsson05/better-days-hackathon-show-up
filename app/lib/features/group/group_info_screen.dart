@@ -13,68 +13,75 @@ class GroupInfoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final g = state.group!;
-    final venue = g.chosenVenue ?? g.venueOptions.first;
+    final group = state.group!;
+    final venue = group.chosenVenue;
     return Scaffold(
       appBar: AppBar(title: const Text('Group')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: surface,
-              borderRadius: BorderRadius.circular(cardRadius),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.place_outlined, size: 20, color: inkDeep),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        venue.name,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
+          if (venue == null)
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(cardRadius),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.how_to_vote_outlined, size: 20, color: inkDeep),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Voting is still open. The destination appears here after everyone votes.',
+                      style: TextStyle(color: bodyInk, height: 1.45),
                     ),
-                    if (g.chosenVenueId == null) ...[
+                  ),
+                ],
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(cardRadius),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.place_outlined,
+                        size: 20,
+                        color: inkDeep,
+                      ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: accentPale,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text(
-                          'Voting open',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: inkDeep,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      Expanded(
+                        child: Text(
+                          venue.name,
+                          style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
                     ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  venue.address,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                VenueMap(venue),
-              ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    venue.address,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  // A map before finalization gives the first candidate visual authority and
+                  // implies the ballot no longer matters. Postgres' chosen_venue_id is the only
+                  // winning signal, so location details exist exclusively in this branch.
+                  VenueMap(venue),
+                ],
+              ),
             ),
-          ),
           const SizedBox(height: 28),
           Text(
-            '${g.members.length} people',
+            '${group.members.length} people',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 12),
@@ -86,9 +93,9 @@ class GroupInfoScreen extends StatelessWidget {
             ),
             child: Column(
               children: [
-                for (var i = 0; i < g.members.length; i++) ...[
-                  _member(context, g.members[i]),
-                  if (i != g.members.length - 1) const Divider(),
+                for (var index = 0; index < group.members.length; index++) ...[
+                  _member(context, group.members[index]),
+                  if (index != group.members.length - 1) const Divider(),
                 ],
               ],
             ),
@@ -99,19 +106,25 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _member(BuildContext context, Member m) => Padding(
+  Widget _member(BuildContext context, Member member) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 12),
     child: Row(
       children: [
-        Avatar(m.avatar),
+        // Signed photo URLs are deliberately passed separately from the durable emoji.
+        // The URL may expire between launches; Avatar can then fall back without losing the
+        // member's identity or requiring group info to understand storage refresh policy.
+        Avatar(member.avatar, imageUrl: member.photoUrl),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(m.displayName, style: Theme.of(context).textTheme.titleMedium),
-            if (m.tags.isNotEmpty)
+            Text(
+              member.displayName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (member.tags.isNotEmpty)
               Text(
-                m.tags.join(', '),
+                member.tags.join(', '),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
           ],

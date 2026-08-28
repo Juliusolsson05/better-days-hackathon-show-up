@@ -6,8 +6,13 @@ import '../../state/app_state.dart';
 import '../group/venue_map.dart';
 import 'reference_data.dart';
 
-/// The mock's two-tab shell is presentation state, not a new domain phase. Keeping it here
-/// avoids contorting the time-based backend lifecycle merely to represent tab selection.
+/// The mock's two-tab shell is a design/rehearsal preview, not a second product backend.
+///
+/// Its groups, votes, and chat messages intentionally use local reference fixtures while the
+/// approved interaction model is reconciled with Show Up's automatic matching contracts. The
+/// production lifecycle never routes here: only debug/demo controls may enter [Phase.home].
+/// Making that boundary explicit prevents a convincing prototype from silently replacing the
+/// durable Repository-backed chat, ballot, and after-meetup flows.
 class ProductShell extends StatefulWidget {
   const ProductShell(this.state, {super.key});
   final AppState state;
@@ -779,8 +784,11 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
                             address: v.address,
                             pitch: v.blurb,
                             categories: const ['meetup'],
-                            lat: 37.7599,
-                            lng: -122.4148,
+                            // The reference supplies street addresses but no coordinates. A
+                            // previous port reused one SF point for every venue, which made a
+                            // polished directions button actively wrong. VenueMap deliberately
+                            // falls back to an address query until the owned corpus supplies the
+                            // venue's real latitude and longitude.
                           ),
                           height: 176,
                         ),

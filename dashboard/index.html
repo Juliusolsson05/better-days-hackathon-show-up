@@ -456,10 +456,20 @@ async function runSweep() {
       out.textContent = `Empty pool — no embedded profiles in ${city} / ${slot} yet. Sign some up.`;
       return;
     }
-    out.className = "out ok";
+    const venueFailures = body.venue_failures || [];
+    const readyBallots = (body.venue_existing || 0) + (body.venue_ready || 0);
+    // Matching and venue retrieval commit independently. Calling the sweep simply "successful"
+    // when a group has no ballot makes the operator discover partial readiness on the demo phone;
+    // keep the group result visible while making the missing follow-up impossible to overlook.
+    out.className = venueFailures.length ? "out bad" : "out ok";
     out.textContent =
       `Formed ${body.groups} group${body.groups === 1 ? "" : "s"} · ` +
-      `${body.unmatched} unmatched · ${body.skipped} skipped.`;
+      `${body.unmatched} unmatched · ${body.skipped} skipped · ` +
+      `${readyBallots} venue ballot${readyBallots === 1 ? "" : "s"} ready.` +
+      (venueFailures.length
+        ? ` ${venueFailures.length} venue job${venueFailures.length === 1 ? "" : "s"} failed: ` +
+          venueFailures.map((failure) => failure.group_id).join(", ")
+        : "");
     // The sweep just emitted group_formed events; pull the funnel forward now rather than
     // waiting up to 15s for the next poll.
     load();

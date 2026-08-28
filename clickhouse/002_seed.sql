@@ -7,12 +7,19 @@
 -- Clustering around ~200 genuinely embedded bios gives a million rows whose neighbours
 -- are actually semantically related, for 200 API calls instead of a million.
 
--- Population centroid. Taken from the archetypes rather than from profile_vectors
--- because the synthetic profiles are archetype + zero-mean noise, so the two centroids
--- agree -- and this way the seed is a single pass instead of insert-then-rewrite.
-TRUNCATE TABLE IF EXISTS embedding_mean;
-INSERT INTO embedding_mean (mean, n)
-SELECT CAST(avgForEach(embedding) AS Array(Float32)), count()
+-- Population centroid. Taken from the archetypes rather than from profile_vectors because
+-- the synthetic profiles are archetype + zero-mean noise, so the two centroids agree -- and
+-- this way the seed is a single pass instead of insert-then-rewrite.
+--
+-- WHY this is a keyed mutation instead of TRUNCATE: embedding_mean is shared by two embedding
+-- domains. id=1 is profiles; id=2 is the independently computed venue centroid used by the
+-- live 9,076-row corpus. A table-wide truncate makes a routine profile bootstrap silently
+-- break venue retrieval and turns an otherwise unnecessary corpus upload into the recovery
+-- procedure. Waiting for the mutation is equally important: ReplacingMergeTree deduplication
+-- is asynchronous, and the seed reads this row again immediately below.
+ALTER TABLE embedding_mean DELETE WHERE id = 1 SETTINGS mutations_sync = 2;
+INSERT INTO embedding_mean (id, mean, n)
+SELECT 1, CAST(avgForEach(embedding) AS Array(Float32)), count()
 FROM archetypes;
 
 TRUNCATE TABLE IF EXISTS profile_vectors;
@@ -39,7 +46,7 @@ SELECT
     (rand(num.number + 3) % 4) > 0
 FROM numbers(1000000) AS num
 INNER JOIN archetypes AS a ON a.id = (num.number % (SELECT count() FROM archetypes))
-CROSS JOIN (SELECT mean FROM embedding_mean LIMIT 1) AS m
+CROSS JOIN (SELECT mean FROM embedding_mean WHERE id = 1 LIMIT 1) AS m
 SETTINGS select_sequential_consistency = 1;
 
 -- Semantic sanity check. A distance-spread check is useless here: noise CREATES spread,

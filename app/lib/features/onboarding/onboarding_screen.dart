@@ -4,273 +4,350 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/theme.dart';
+import '../../models/profile_input.dart';
 import '../../state/app_state.dart';
-import '../product/product_shell.dart';
 
-/// Direct native translation of the reference onboarding. Fields absent from the approved
-/// UX receive neutral values only at the repository boundary; restoring the old long form
-/// here would make the experience structurally different from the source of truth.
+/// Signup. Interests and photo are required, per the PRD -- interests are the matching
+/// input, the photo is what makes the group feel like people rather than names.
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen(this.state, {super.key});
   final AppState state;
+  const OnboardingScreen(this.state, {super.key});
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const interests = <(IconData, String)>[
-    (Icons.menu_book_rounded, 'Books'),
-    (Icons.local_cafe_rounded, 'Slow coffee'),
-    (Icons.hiking_rounded, 'Hiking'),
-    (Icons.movie_rounded, 'Film'),
-    (Icons.palette_rounded, 'Ceramics'),
-    (Icons.ramen_dining_rounded, 'Food markets'),
-    (Icons.image_rounded, 'Galleries'),
-    (Icons.casino_rounded, 'Board games'),
-    (Icons.music_note_rounded, 'Music'),
-    (Icons.pedal_bike_rounded, 'Cycling'),
-    (Icons.photo_camera_rounded, 'Photography'),
-    (Icons.eco_rounded, 'Gardening'),
+  static const _interests = [
+    'climbing',
+    'music',
+    'photography',
+    'baking',
+    'chess',
+    'running',
+    'anime',
+    'gardening',
+    'board games',
+    'cycling',
+    'pottery',
+    'birding',
   ];
-  final selected = <String>{};
-  var step = 0;
-  XFile? photo;
-  var busy = false;
-  bool get canContinue =>
-      step == 0 || (step == 1 ? selected.length >= 2 : photo != null);
+  static const _avatars = ['🧗', '🎧', '📷', '🍞', '♟️', '🏃', '🌱', '🎨'];
+  static const _slots = ['fri_eve', 'sat_day', 'sat_eve', 'sun_day'];
 
-  Future<void> pickPhoto() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1200,
-      imageQuality: 84,
-    );
-    if (picked != null && mounted) setState(() => photo = picked);
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  final _passion = TextEditingController();
+  final _customTag = TextEditingController();
+  final _picked = <String>{};
+  // PRD: pick from the fixed set "plus write your own (pokemon, anime, whatever)".
+  final _extraTags = <String>[];
+  final _avail = <String>{'fri_eve'};
+  String _avatar = '🧗';
+  XFile? _photo;
+  bool _busy = false;
+
+  String? get _normalizedPhone => normalizeSfPhone(_phone.text);
+
+  // Photo and phone are not decoration: the former makes the matched group feel like people,
+  // and the latter is the endpoint of mutual contact exchange. Letting either be absent creates
+  // a profile that can enter matching but cannot complete the product loop.
+  bool get _valid =>
+      _name.text.trim().isNotEmpty &&
+      _passion.text.trim().length > 10 &&
+      _picked.isNotEmpty &&
+      _avail.isNotEmpty &&
+      _photo != null &&
+      _normalizedPhone != null;
+
+  static const _maxExtraTags = 8;
+
+  Future<void> _pickPhoto() async {
+    if (_busy) return;
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        imageQuality: 82,
+      );
+      if (picked != null && mounted) {
+        setState(() => _photo = picked);
+      }
+    } catch (_) {
+      // Permission denied, or the picker channel threw. Nothing actionable to show
+      // beyond letting them try again.
+      if (mounted) {
+        _toast('Could not open your photos. Check the app permission.');
+      }
+    }
   }
 
-  Future<void> next() async {
-    if (step < 2) return setState(() => step++);
-    setState(() => busy = true);
+  void _addCustomTag() {
+    // Collapse whitespace, drop a leading '#', cap the length so one tag can't blow out
+    // the chip row.
+    final tag = _customTag.text
+        .trim()
+        .toLowerCase()
+        .replaceFirst(RegExp(r'^#+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (tag.isEmpty) return;
+    if (_picked.contains(tag)) {
+      _customTag.clear();
+      return;
+    }
+    if (_extraTags.length >= _maxExtraTags) {
+      _toast('That is plenty of interests to match on.');
+      return;
+    }
+    setState(() {
+      final known = _interests.contains(tag) || _extraTags.contains(tag);
+      if (!known) {
+        _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      }
+      _picked.add(known ? tag : _extraTags.last);
+      _customTag.clear();
+    });
+  }
+
+  Future<void> _submit() async {
+    setState(() => _busy = true);
     try {
-      final profile = await widget.state.repo.submitProfile(
-        displayName: 'You',
-        avatar: '',
-        passion: selected.join(', '),
-        tags: selected.toList(),
+      final p = await widget.state.repo.submitProfile(
+        displayName: _name.text.trim(),
+        avatar: _avatar,
+        passion: _passion.text.trim(),
+        tags: _picked.toList(),
         city: 'SF',
-        availability: const ['weekend'],
-        photoPath: photo?.path,
+        availability: _avail.toList(),
+        phone: _normalizedPhone!,
+        photoPath: _photo?.path,
       );
-      await widget.state.completeOnboarding(profile);
-    } catch (_) {
+      await widget.state.completeOnboarding(p);
+    } catch (e) {
       if (!mounted) return;
-      setState(() => busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not save your profile. Try again.'),
-        ),
+      setState(() => _busy = false);
+      final offline =
+          e.toString().toLowerCase().contains('socket') ||
+          e.toString().toLowerCase().contains('clientexception');
+      _toast(
+        offline
+            ? "Couldn't reach the server. Check your connection and try again."
+            : "Couldn't create your profile. Give it another go.",
       );
     }
   }
 
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 32, 20, 18),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                for (var i = 0; i < 3; i++)
-                  Expanded(
-                    child: Container(
-                      height: 4,
-                      margin: EdgeInsets.only(right: i == 2 ? 0 : 6),
-                      decoration: BoxDecoration(
-                        color: i <= step ? accent : const Color(0x190E0F0C),
-                        borderRadius: BorderRadius.circular(99),
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    _passion.dispose();
+    _customTag.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Show Up')),
+      body: ListView(
+        // Scrolling away from a field should close its keyboard.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
+        children: [
+          const ScreenIntro(
+            'You go alone.\nSo does everyone else.',
+            'Four to six people, matched on what you are into.',
+          ),
+          const SizedBox(height: 32),
+
+          const _Label('What should people call you?'),
+          TextField(
+            controller: _name,
+            onChanged: (_) => setState(() {}),
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              hintText: 'First name',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('Your phone number'),
+          Text(
+            'Only people you choose who also choose you will ever see it.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _phone,
+            onChanged: (_) => setState(() {}),
+            keyboardType: TextInputType.phone,
+            autofillHints: const [AutofillHints.telephoneNumber],
+            decoration: const InputDecoration(hintText: '(415) 555-0123'),
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('Add a photo'),
+          Text(
+            'A clear photo of you — this is how the group recognizes each other.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 10),
+          Semantics(
+            button: true,
+            label: _photo == null ? 'Add a photo' : 'Change photo',
+            child: GestureDetector(
+              onTap: _pickPhoto,
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _photo == null ? ink : positive,
+                    width: 2,
+                  ),
+                  image: _photo == null
+                      ? null
+                      : DecorationImage(
+                          image: FileImage(File(_photo!.path)),
+                          fit: BoxFit.cover,
+                        ),
+                ),
+                child: _photo == null
+                    ? const Icon(Icons.add_a_photo_outlined, color: ink)
+                    : null,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('Pick a chat icon'),
+          Wrap(
+            spacing: 10,
+            children: [
+              for (final a in _avatars)
+                GestureDetector(
+                  onTap: () => setState(() => _avatar = a),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _avatar == a ? inkDeep : Colors.transparent,
+                        width: 2,
                       ),
+                      color: _avatar == a ? accentPale : Colors.transparent,
                     ),
+                    padding: const EdgeInsets.all(2),
+                    child: Avatar(a),
                   ),
-              ],
-            ),
-            Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                child: switch (step) {
-                  0 => const _Welcome(key: ValueKey(0)),
-                  1 => _Interests(
-                    key: const ValueKey(1),
-                    selected: selected,
-                    onToggle: (value) => setState(() {
-                      selected.contains(value)
-                          ? selected.remove(value)
-                          : selected.add(value);
-                    }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('What are you into?'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final i in [..._interests, ..._extraTags])
+                FilterChip(
+                  label: Text(i),
+                  selected: _picked.contains(i),
+                  onSelected: (v) =>
+                      setState(() => v ? _picked.add(i) : _picked.remove(i)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customTag,
+                  onSubmitted: (_) => _addCustomTag(),
+                  maxLength: 24,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    hintText: 'Add your own: anime, pokemon, whatever',
+                    isDense: true,
+                    counterText: '',
                   ),
-                  _ => _PhotoStep(
-                    key: const ValueKey(2),
-                    photo: photo,
-                    onPick: pickPhoto,
-                  ),
-                },
-              ),
-            ),
-            FilledButton(
-              onPressed: canContinue && !busy ? next : null,
-              child: Text(step == 2 ? 'Find my table' : 'Continue'),
-            ),
-            const SizedBox(height: 4),
-            TextButton(
-              onPressed: widget.state.skipOnboarding,
-              child: const Text(
-                'Skip onboarding',
-                style: TextStyle(
-                  decoration: TextDecoration.underline,
-                  color: mutedInk,
-                  fontSize: 13,
                 ),
               ),
+              const SizedBox(width: 8),
+              IconButton(onPressed: _addCustomTag, icon: const Icon(Icons.add)),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // The free-text field is what the embedding is actually built from.
+          const _Label('What are you passionate about?'),
+          TextField(
+            controller: _passion,
+            maxLines: 4,
+            maxLength: 280,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              hintText:
+                  'The thing you would talk about all night if someone let you.',
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('When are you free?'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in _slots)
+                FilterChip(
+                  label: Text(s.replaceAll('_', ' ')),
+                  selected: _avail.contains(s),
+                  onSelected: (v) =>
+                      setState(() => v ? _avail.add(s) : _avail.remove(s)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 32),
+
+          FilledButton(
+            onPressed: _valid && !_busy ? _submit : null,
+            child: _busy
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ink,
+                    ),
+                  )
+                : const Text('Find me a group'),
+          ),
+        ],
       ),
-    ),
-  );
+    );
+  }
 }
 
-class _Welcome extends StatelessWidget {
-  const _Welcome({super.key});
+class _Label extends StatelessWidget {
+  final String text;
+  const _Label(this.text);
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 40),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'SOLO MEETUPS',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.8,
-            color: mutedInk,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'A table of four to six people who all came alone.',
-          style: displayStyle(30),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          "No plus-ones, no odd one out. You'll get one lighthearted question to ask one person, so there's nothing to figure out when you arrive.",
-          style: TextStyle(fontSize: 14, height: 1.55, color: mutedInk),
-        ),
-      ],
-    ),
-  );
-}
-
-class _Interests extends StatelessWidget {
-  const _Interests({super.key, required this.selected, required this.onToggle});
-  final Set<String> selected;
-  final ValueChanged<String> onToggle;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 32),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('What would you actually show up for?', style: displayStyle(24)),
-        const SizedBox(height: 8),
-        const Text(
-          'Pick at least two. This is how we match your table.',
-          style: TextStyle(fontSize: 13, color: mutedInk),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: SingleChildScrollView(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final item in _OnboardingScreenState.interests)
-                  FilterChip(
-                    avatar: Icon(item.$1, size: 17, color: ink),
-                    label: Text(item.$2),
-                    selected: selected.contains(item.$2),
-                    showCheckmark: false,
-                    onSelected: (_) => onToggle(item.$2),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _PhotoStep extends StatelessWidget {
-  const _PhotoStep({super.key, required this.photo, required this.onPick});
-  final XFile? photo;
-  final VoidCallback onPick;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 32),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Add a photo', style: displayStyle(24)),
-        const SizedBox(height: 8),
-        const Text(
-          "It's what makes your group feel like people instead of names. Required, and only your group sees it.",
-          style: TextStyle(fontSize: 13, height: 1.45, color: mutedInk),
-        ),
-        const SizedBox(height: 24),
-        Center(
-          child: GestureDetector(
-            onTap: onPick,
-            child: Container(
-              width: 160,
-              height: 160,
-              alignment: Alignment.center,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: surface,
-                border: Border.all(color: line),
-              ),
-              child: photo == null
-                  ? const Text(
-                      'Tap to upload',
-                      style: TextStyle(fontSize: 12, color: mutedInk),
-                    )
-                  : Image.file(
-                      File(photo!.path),
-                      width: 160,
-                      height: 160,
-                      fit: BoxFit.cover,
-                    ),
-            ),
-          ),
-        ),
-        if (photo != null)
-          Center(
-            child: TextButton(
-              onPressed: onPick,
-              child: const Text(
-                'Choose another',
-                style: TextStyle(
-                  fontSize: 12,
-                  decoration: TextDecoration.underline,
-                  color: mutedInk,
-                ),
-              ),
-            ),
-          ),
-      ],
-    ),
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
   );
 }

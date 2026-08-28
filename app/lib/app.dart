@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -27,11 +28,23 @@ class _ShowUpAppState extends State<ShowUpApp> {
   /// calls Supabase.initialize under the same flag, so MockRepository stays the default
   /// and needs no cloud project.
   static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
+  static const _showReferenceUi = bool.fromEnvironment('SHOW_REFERENCE_UI');
 
   late final Repository _repo = _useSupabase
       ? SupabaseRepository(Supabase.instance.client)
       : MockRepository();
-  late final AppState _state = AppState(_repo, initialPhase: _initialPhase());
+  late final AppState _state = AppState(
+    _repo,
+    initialPhase: _initialPhase(),
+    // The reference shell is intentionally a mock-only preview. It contains static
+    // example groups whose "join" controls are presentation prototypes, so routing a
+    // real session there would fork the product lifecycle away from Postgres truth.
+    // Debug builds make visual review convenient; SHOW_REFERENCE_UI makes the same
+    // preview available in a release-mode reference build without weakening production.
+    referenceUiPreview: !_useSupabase && (kDebugMode || _showReferenceUi),
+  );
+  bool _restoring = _useSupabase;
+  Object? _restoreError;
 
   Phase _initialPhase() {
     if (!_useSupabase) return Phase.onboarding;
@@ -46,6 +59,21 @@ class _ShowUpAppState extends State<ShowUpApp> {
   void initState() {
     super.initState();
     _repo.signIn();
+    if (_useSupabase) _restore();
+  }
+
+  Future<void> _restore() async {
+    setState(() {
+      _restoring = true;
+      _restoreError = null;
+    });
+    try {
+      await _state.restore();
+    } catch (error) {
+      if (mounted) _restoreError = error;
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
   }
 
   @override
@@ -63,27 +91,71 @@ class _ShowUpAppState extends State<ShowUpApp> {
       theme: buildTheme(),
       home: ListenableBuilder(
         listenable: _state,
-        // Multiline fields use Return for a newline, so tapping the canvas is the only
-        // universal dismissal gesture. Keeping it at the shell means future screens
-        // inherit the behavior instead of each rediscovering the keyboard trap.
-        builder: (context, _) => GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-          child: Stack(
-            children: [
-              switch (_state.phase) {
-                Phase.auth => AuthScreen(_state),
-                Phase.onboarding => OnboardingScreen(_state),
-                Phase.home => ProductShell(_state),
-                Phase.waiting => WaitingScreen(_state),
-                Phase.matched || Phase.during => GroupChatScreen(_state),
-                Phase.after => AfterFlow(_state),
-                Phase.contacts => ContactsScreen(_state),
-              },
-              _DevJump(_state),
-            ],
-          ),
-        ),
+        builder: (context, _) {
+          if (_restoring) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (_restoreError != null) {
+            return Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'We could not restore your place yet.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: _restore,
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+          // Multiline fields use Return for a newline, so tapping the canvas is the only
+          // universal dismissal gesture. Keeping it at the shell means future screens
+          // inherit the behavior instead of each rediscovering the keyboard trap.
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+            child: Stack(
+              children: [
+                switch (_state.phase) {
+                  Phase.auth => AuthScreen(_state),
+                  Phase.onboarding => OnboardingScreen(_state),
+                  // Phase.home is never selected by real onboarding or restoration.
+                  // Keeping the branch in the production router avoids a second app
+                  // entrypoint solely for reference review, while AppState owns the
+                  // invariant that only an explicitly enabled preview can enter it.
+                  Phase.home => ProductShell(_state),
+                  Phase.waiting => WaitingScreen(_state),
+                  Phase.matched || Phase.during => GroupChatScreen(_state),
+                  Phase.after => AfterFlow(_state),
+                  Phase.contacts => ContactsScreen(_state),
+                },
+                // Demo controls compress a three-day lifecycle, but a production build
+                // must never let a client manufacture phases that only the server owns.
+                // The named define keeps rehearsals possible without quietly turning the
+                // debug affordance into part of the release product.
+                if (kDebugMode ||
+                    const bool.fromEnvironment('SHOW_DEMO_CONTROLS'))
+                  _DevJump(_state),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -128,10 +200,11 @@ class _DevJump extends StatelessWidget {
             }
             if (p == Phase.matched && state.group == null) {
               // Mock: fabricate a group. Real backend: just fetch whatever run-matching
-              // has already written for this user.
-              if (state.repo is MockRepository) {
-                (state.repo as MockRepository).formGroup();
-              }
+              // has already written for this user. Keep the type guard here because a
+              // release-like Supabase rehearsal must never mutate server state through
+              // a control that only exists to compress the three-day demo timeline.
+              final repo = state.repo;
+              if (repo is MockRepository) repo.formGroup();
               await state.enterGroup();
               return;
             }

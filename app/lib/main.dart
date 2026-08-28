@@ -38,6 +38,10 @@ Future<void> main() async {
     // error costs far more than the quota does.
     options.tracesSampleRate = 1.0;
     options.attachScreenshot = true;
+    // Sentry still marks hierarchy capture experimental even though it is the only practical
+    // way to diagnose a release-only layout failure on an unattached demo phone. Keep the
+    // suppression at the call site so a future stable SDK forces us to reconsider this choice.
+    // ignore: experimental_member_use
     options.attachViewHierarchy = true;
   }, appRunner: _boot);
 }
@@ -51,6 +55,9 @@ Future<void> _boot() async {
       _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,
       'USE_SUPABASE=true needs SUPABASE_URL and SUPABASE_ANON_KEY dart-defines',
     );
+    // Supabase renamed the public client credential to "publishable key" to make its security
+    // role harder to misunderstand. Keep the environment variable backward-compatible for the
+    // demo scripts, but use the current SDK argument so a future major upgrade is not blocked.
     await Supabase.initialize(
       url: _supabaseUrl,
       publishableKey: _supabaseAnonKey,

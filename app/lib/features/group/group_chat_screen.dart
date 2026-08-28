@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,46 +24,135 @@ class GroupChatScreen extends StatefulWidget {
 class _GroupChatScreenState extends State<GroupChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
+  Timer? _groupRefresh;
+  bool _refreshingGroup = false;
+
+  /// Supabase creates a new realtime channel every time watchMessages is called, so the
+  /// stream belongs to this State object's lifecycle rather than build(). A ListenableBuilder,
+  /// keyboard animation, or viewport change can rebuild this screen many times without the
+  /// user navigating; subscribing in build would leak channels and duplicate deliveries.
+  ///
+  /// `late` also matters: State.widget is not attached while the State constructor runs.
+  /// The initializer is evaluated on first use, after Flutter has attached the immutable
+  /// group for this screen's lifetime.
+  late final Stream<List<Message>> _messages = widget.state.repo.watchMessages(
+    widget.state.group!.id,
+  );
+
+  /// The previous message count lets [_toBottom] distinguish a conversation update from
+  /// an unrelated rebuild. Without that distinction, opening the keyboard would pull a user
+  /// away from an older message they intentionally scrolled up to read.
+  int _lastCount = 0;
+  bool _hasSpoken = false;
 
   @override
   void initState() {
     super.initState();
-    // The flaking acknowledgement is a "come back later" surface: it can only be known
-    // once the rest of the group has voted, which is after the meetup, so entering the
-    // chat is where we check for it.
+    final groupId = widget.state.group!.id;
+
+    // Analytics records entering the actual product surface, not how often Flutter paints it.
+    // Repository.track is fire-and-forget by contract so a telemetry outage cannot block chat.
+    unawaited(widget.state.repo.track('chat_opened', groupId: groupId));
+
+    // The no-show verdict only exists after peers submit attendance. Checking when chat opens
+    // makes the private acknowledgement reachable after a cold start, while waiting one frame
+    // avoids presenting a modal before this route owns a valid Navigator context.
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
+
+    if (widget.state.group!.chosenVenueId == null) {
+      // Ballots are private, so an earlier voter receives no realtime row when somebody else's
+      // final vote selects the winner. Poll the small shared Group projection instead of making
+      // private votes observable merely to trigger UI. The final voter refreshes immediately;
+      // everyone else converges within ten seconds.
+      _groupRefresh = Timer.periodic(const Duration(seconds: 10), (_) {
+        if (widget.state.group?.chosenVenueId != null) {
+          _groupRefresh?.cancel();
+          return;
+        }
+        unawaited(_refreshGroupProjection());
+      });
+    }
+  }
+
+  Future<void> _refreshGroupProjection() async {
+    // Timer.periodic does not wait for its callback. Without this guard, a slow mobile request can
+    // overlap the next tick and make an older response overwrite a newer chosen-venue result.
+    if (_refreshingGroup) return;
+    _refreshingGroup = true;
+    try {
+      await widget.state.refreshGroup();
+      if (widget.state.group?.chosenVenueId != null) _groupRefresh?.cancel();
+    } catch (_) {
+      // Chat remains live while this best-effort projection refresh retries on the next tick.
+    } finally {
+      _refreshingGroup = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _groupRefresh?.cancel();
+    _input.dispose();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _maybeAckNoShow() async {
-    final gid = widget.state.group!.id;
+    final groupId = widget.state.group!.id;
     final prefs = await SharedPreferences.getInstance();
-    final key = 'noshow_ack_$gid';
+    final key = 'noshow_ack_$groupId';
     if (prefs.getBool(key) ?? false) return;
-    if (!await widget.state.repo.wasMarkedNoShow(gid)) return;
+    if (!await widget.state.repo.wasMarkedNoShow(groupId)) return;
     if (!mounted) return;
+
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: surface,
       isScrollControlled: true,
       builder: (_) => const NoShowSheet(),
     );
-    // Shown once per group -- an absence acknowledged every launch would be its own
-    // small punishment, which is the opposite of the point.
+
+    // Repeating an absence acknowledgement on every launch would turn a neutral product
+    // response into punishment. Scope the receipt to the group because a later meetup is a
+    // distinct event and may have a distinct attendance outcome.
     await prefs.setBool(key, true);
   }
 
   void _send() {
     final text = _input.text.trim();
     if (text.isEmpty) return;
-    widget.state.repo.sendMessage(widget.state.group!.id, text);
+    final groupId = widget.state.group!.id;
+
+    // Delivery failure is represented by the optimistic bubble itself. Swallowing the Future
+    // here prevents the same expected network failure from also becoming an unhandled zone
+    // error; the repository emits MessageStatus.failed and preserves the idempotent retry key.
+    unawaited(widget.state.repo.sendMessage(groupId, text).catchError((_) {}));
+
+    if (!_hasSpoken) {
+      _hasSpoken = true;
+      // Only the silent-to-speaking transition answers the funnel question. Per-message events
+      // would measure prolific people instead of whether a formed group started interacting.
+      unawaited(
+        widget.state.repo.track('chat_first_message', groupId: groupId),
+      );
+    }
     _input.clear();
   }
 
-  void _toBottom() {
-    if (!_scroll.hasClients) return;
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _scroll.jumpTo(_scroll.position.maxScrollExtent),
-    );
+  void _toBottom(int count) {
+    final grew = count > _lastCount;
+    _lastCount = count;
+    if (!grew || !_scroll.hasClients) return;
+
+    const nearBottom = 120.0;
+    final position = _scroll.position;
+    if (position.maxScrollExtent - position.pixels > nearBottom &&
+        position.pixels > 0) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
   }
 
   void _openGroup() => Navigator.push(
@@ -71,12 +162,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final g = widget.state.group!;
-    final when = DateFormat('EEEE, h:mm a').format(g.eventAt);
+    final group = widget.state.group!;
+    final when = DateFormat('EEEE, h:mm a').format(group.eventAt);
     return Scaffold(
       appBar: AppBar(
-        // Tapping the group name opens members, the way WhatsApp does it. There is no
-        // standalone profile page anywhere in this product.
+        // The title is the roster entry point, mirroring familiar group-chat products without
+        // introducing the standalone profile surface the product deliberately excludes.
         title: InkWell(
           onTap: _openGroup,
           child: Column(
@@ -101,20 +192,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
       body: Column(
         children: [
-          _VenueShortcut(group: g, onTap: _openGroup),
+          _VenueShortcut(group: group, onTap: _openGroup),
           Expanded(
             child: StreamBuilder<List<Message>>(
-              stream: widget.state.repo.watchMessages(g.id),
-              builder: (context, snap) {
-                final msgs = snap.data ?? const <Message>[];
-                _toBottom();
+              stream: _messages,
+              builder: (context, snapshot) {
+                final messages = snapshot.data ?? const <Message>[];
+                _toBottom(messages.length);
                 return ListView.builder(
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
-                  itemCount: msgs.length,
-                  itemBuilder: (context, i) => _bubble(msgs[i]),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) => _bubble(messages[index]),
                 );
               },
             ),
@@ -158,58 +249,84 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  Widget _bubble(Message m) {
-    if (m.kind == MessageKind.venueVote) return VenueVoteCard(widget.state);
-    if (m.kind == MessageKind.system) {
+  Widget _bubble(Message message) {
+    if (message.kind == MessageKind.venueVote) {
+      return VenueVoteCard(widget.state);
+    }
+    if (message.kind == MessageKind.system) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Text(
-          m.body,
+          message.body,
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 13, height: 1.4, color: mutedInk),
         ),
       );
     }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: m.isMine
+        mainAxisAlignment: message.isMine
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
-          if (!m.isMine) ...[
-            Avatar(m.avatar, size: 30),
+          if (!message.isMine) ...[
+            // The signed URL is intentionally separate from the durable emoji fallback.
+            // Storage URLs expire; losing the fallback would turn a normal refresh boundary
+            // into a broken identity marker in the conversation.
+            Avatar(message.avatar, size: 30, imageUrl: message.authorPhotoUrl),
             const SizedBox(width: 8),
           ],
           Flexible(
             child: Column(
-              crossAxisAlignment: m.isMine
+              crossAxisAlignment: message.isMine
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.start,
               children: [
-                if (!m.isMine)
+                if (!message.isMine)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 3, left: 2),
                     child: Text(
-                      m.authorName,
+                      message.authorName,
                       style: const TextStyle(fontSize: 12, color: mutedInk),
                     ),
                   ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: m.isMine ? accent : surface,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    m.body,
-                    style: const TextStyle(height: 1.35, color: ink),
+                // Sending is dimmed rather than badged because it is the common, brief state.
+                // Failure is the state worth interrupting for: a silent drop can feel exactly
+                // like being ignored, which is especially damaging for this product's premise.
+                Opacity(
+                  opacity: message.status == MessageStatus.sending ? 0.55 : 1,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: message.isMine ? accent : surface,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      message.body,
+                      style: const TextStyle(height: 1.35, color: ink),
+                    ),
                   ),
                 ),
+                if (message.status == MessageStatus.failed)
+                  _RetryRow(
+                    message,
+                    onRetry: () {
+                      // retryMessage reuses clientMsgId, so a timed-out request that actually
+                      // reached Postgres cannot create a duplicate when the user taps Retry.
+                      unawaited(
+                        widget.state.repo.retryMessage(
+                          widget.state.group!.id,
+                          message,
+                        ),
+                      );
+                    },
+                  ),
               ],
             ),
           ),
@@ -219,10 +336,40 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 }
 
-/// The map used to be discoverable only by knowing that the chat title was tappable.
-/// That convention is familiar after someone has used WhatsApp, but it is a bad demo
-/// dependency and hides the most concrete part of showing up. This row names the venue,
-/// names the action, and still keeps the full map in group info where it has room.
+class _RetryRow extends StatelessWidget {
+  final Message message;
+  final VoidCallback onRetry;
+  const _RetryRow(this.message, {required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 4, right: 2),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        const Text('Not sent', style: TextStyle(fontSize: 12, color: negative)),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: onRetry,
+          child: const Text(
+            'Retry',
+            style: TextStyle(
+              fontSize: 12,
+              color: inkDeep,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Keeps the meetup destination discoverable without inventing a result for an open vote.
+///
+/// An earlier presentation used the first option whenever chosenVenue was null. That made a
+/// candidate look finalized and quietly overruled the anonymous ballot. The row keeps the PR's
+/// strong visual entry point, but names a place only after Postgres records the winning option.
 class _VenueShortcut extends StatelessWidget {
   const _VenueShortcut({required this.group, required this.onTap});
 
@@ -231,7 +378,8 @@ class _VenueShortcut extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final venue = group.chosenVenue ?? group.venueOptions.first;
+    final venue = group.chosenVenue;
+    final hasOptions = group.venueOptions.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Material(
@@ -251,8 +399,10 @@ class _VenueShortcut extends StatelessWidget {
                     color: accentPale,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.map_outlined,
+                  child: Icon(
+                    venue == null
+                        ? Icons.how_to_vote_outlined
+                        : Icons.map_outlined,
                     color: inkDeep,
                     size: 21,
                   ),
@@ -263,20 +413,26 @@ class _VenueShortcut extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        venue.name,
+                        venue?.name ?? 'Choose where you’ll meet',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       Text(
-                        venue.address,
+                        venue?.address ??
+                            (hasOptions
+                                ? '${group.venueOptions.length} options are ready'
+                                : 'Venue options are being prepared'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'View map',
-                  style: TextStyle(color: inkDeep, fontWeight: FontWeight.w700),
+                Text(
+                  venue == null ? 'View vote' : 'View map',
+                  style: const TextStyle(
+                    color: inkDeep,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(width: 4),
                 const Icon(Icons.chevron_right, color: inkDeep),

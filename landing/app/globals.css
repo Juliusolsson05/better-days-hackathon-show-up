@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+ * The marketing palette is intentionally narrower than the product palette. Lime is the
+ * single identity colour; every other surface is white, sage, or ink. Resisting extra accent
+ * colours matters because the green button must remain instantly legible as "the action"
+ * even when it appears halfway down a long page.
+ */
+@theme {
+  --color-primary: #9fe870;
+  --color-primary-active: #cdffad;
+  --color-primary-neutral: #c5edab;
+  --color-primary-pale: #e2f6d5;
+  --color-ink: #0e0f0c;
+  --color-ink-deep: #163300;
+  --color-body: #454745;
+  --color-muted: #868685;
+  --color-canvas: #ffffff;
+  --color-canvas-soft: #e8ebe6;
+  --color-negative: #d03238;
+
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-space-mono), ui-monospace, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Wise Sans is proprietary. Inter Black preserves the useful part of its voice -- a very
+   heavy, compact display -- without pretending a lookalike is the real brand font. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: -0.045em;
+  line-height: 0.9;
+}
+
+/* Small structural labels. Letterspaced sans rather than mono -- mono on a light, warm page
+   reads as a terminal window and pulls the whole thing back toward "developer tool". */
+.eyebrow {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--color-body);
+}
+
+/* Full-bleed bands without giving up a single readable-width content grid. The enormous
+   shadow paints only the inline axis and clip-path trims it to the section's block bounds;
+   unlike a 100vw child it does not introduce horizontal scroll when a scrollbar is present. */
+.band {
+  background: var(--band-color, var(--color-canvas));
+  box-shadow: 0 0 0 100vmax var(--band-color, var(--color-canvas));
+  clip-path: inset(0 -100vmax);
+}
+
+.band-sage { --band-color: var(--color-canvas-soft); }
+.band-green { --band-color: var(--color-primary-pale); }
+.band-dark { --band-color: var(--color-ink); }
+
+:focus-visible {
+  outline: 3px solid var(--color-ink);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.rise {
+  /* Content must never depend on animation to become visible. The first implementation
+     began at opacity zero; screenshots and slow hydration could therefore produce a blank
+     hero. Starting visible makes motion a progressive enhancement, not a rendering gate. */
+  animation: rise 0.55s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+/*
+ * Both animations decorate a layout that is already correct without them, so the honest
+ * response to a reduced-motion preference is to land everything in its final state rather
+ * than to substitute a gentler effect.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  .rise {
+    opacity: 1;
+    animation: none;
+  }
+
+}

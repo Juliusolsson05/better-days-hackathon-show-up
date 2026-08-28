@@ -24,31 +24,30 @@ language. No screenshots of the UI, no phone mockups, no faces — the product d
 has no face photos, and a landing page full of stock portraits would contradict the pitch
 on sight.
 
-**Signature: the table.** The hero is a table with six seats that fill one at a time as
-the page loads. Each seat carries an interest rather than a name or a face — `climbing`,
-`records`, `sourdough` — because that is genuinely what the matcher groups on. One seat
-reads `you`. The caption is the thesis: everyone here came alone. This renders the product
-in one object, and it is the only place the design spends any boldness.
+**Signature: heavy editorial type.** The original table illustration repeated the hero in a
+less clear form and consumed the space where signup should be, so it was removed after visual
+review. The brand moment is now one compact, very heavy headline paired directly with the
+waitlist form. The assigned-question card becomes the memorable object because it is genuine
+product output rather than a decorative diagram.
 
-**Palette — candlelight, not dark mode.** The app's warm near-black and terracotta already
-imply a lit room at night; the waiting screen is literally a candle. Pushing that further
-separates it from the generic dark-background-plus-bright-accent look: warm-black ground,
-ember and amber as two warm lights, and cream rather than pure white for text, because pure
-white reads as UI chrome and cream reads as lamplight.
+**Palette — lime, sage, white, ink.** A Wise-inspired surface system alternates pale sage
+bands and white content, with near-black used for one polarity-flipped trust section and the
+footer. Lime is the sole identity colour and is reserved for primary action and emphasis;
+introducing another accent would weaken the conversion signature.
 
 | Token | Value | Role |
 |---|---|---|
-| `ink` | `#12100E` | the room |
-| `surface` | `#1C1815` | raised panels, the tabletop |
-| `ember` | `#E8734A` | primary accent, carried over from the app |
-| `amber` | `#F0B27A` | secondary warm light |
-| `cream` | `#F2E9DE` | body text |
-| `smoke` | `#8A7F76` | secondary text |
+| `primary` | `#9FE870` | primary action and identity |
+| `primary-pale` | `#E2F6D5` | supportive cards and badges |
+| `canvas-soft` | `#E8EBE6` | hero and alternating bands |
+| `canvas` | `#FFFFFF` | content and cards |
+| `ink` | `#0E0F0C` | display copy and dark surfaces |
+| `body` | `#454745` | readable secondary copy |
 
-**Type.** Fraunces for display — a warm serif with a wonk axis, so it reads handmade rather
-than corporate, and it is not the Playfair/Instrument Serif pairing that every AI-generated
-page arrives at. Instrument Sans for body. Space Mono, used sparingly at small sizes, for
-eyebrow labels and the deck's figures, borrowing the register of a reservation card.
+**Type.** Wise Sans is proprietary, so Inter performs both roles honestly: weight 900 for
+brand statements and 400/600 for utility and body. The role separation matters more than
+adding a lookalike font with its own personality. Space Mono remains only for the one
+technical scoring formula in the deck.
 
 **Structure.** Sections are not numbered except where the content is genuinely a sequence
 (how it works), because numbering something that is not ordered is decoration pretending to

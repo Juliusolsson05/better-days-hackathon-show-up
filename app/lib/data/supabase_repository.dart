@@ -316,6 +316,22 @@ class SupabaseRepository implements Repository {
   }
 
   @override
+  Future<bool> wasMarkedNoShow(String groupId) async {
+    // attendance_result returns a row per person the group voted on. We look at our own
+    // row only, and require at least two votes so a single early opinion does not tell
+    // someone they flaked. Absent = fewer than half the voters saw you.
+    final rows =
+        await _client.rpc('attendance_result', params: {'grp': groupId}) as List;
+    for (final r in rows.cast<Map<String, dynamic>>()) {
+      if (r['subject_id'] != _uid) continue;
+      final showed = (r['showed_up'] as num).toInt();
+      final total = (r['total'] as num).toInt();
+      return total >= 2 && showed * 2 < total;
+    }
+    return false;
+  }
+
+  @override
   Future<void> selectContacts(String groupId, Set<String> selectedIds) async {
     // Replace rather than accrete: wipe my picks for this group, then insert the current
     // set. The UI has no un-pick-and-resubmit path, but the demo re-runs the flow, and

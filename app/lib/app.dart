@@ -10,6 +10,7 @@ import 'state/app_state.dart';
 import 'features/after/after_flow.dart';
 import 'features/after/contacts_screen.dart';
 import 'features/group/group_chat_screen.dart';
+import 'features/group/no_show_sheet.dart';
 import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
@@ -101,7 +102,7 @@ class _DevJump extends StatelessWidget {
       right: 8,
       bottom: 92,
       child: SafeArea(
-        child: PopupMenuButton<Phase>(
+        child: PopupMenuButton<Object>(
           tooltip: 'Jump to step',
           icon: const CircleAvatar(
             radius: 20,
@@ -109,6 +110,20 @@ class _DevJump extends StatelessWidget {
             child: Icon(Icons.fast_forward, size: 18, color: accent),
           ),
           onSelected: (p) async {
+            if (p == 'noshow') {
+              // Preview the flaking acknowledgement. There is no attendance data in the
+              // mock to derive it from, so flip the flag and show the sheet directly.
+              if (state.repo is MockRepository) {
+                (state.repo as MockRepository).demoNoShow = true;
+              }
+              await showModalBottomSheet<void>(
+                context: context,
+                backgroundColor: surface,
+                isScrollControlled: true,
+                builder: (_) => const NoShowSheet(),
+              );
+              return;
+            }
             if (p == Phase.matched && state.group == null) {
               // Mock: fabricate a group. Real backend: just fetch whatever run-matching
               // has already written for this user.
@@ -119,7 +134,7 @@ class _DevJump extends StatelessWidget {
               return;
             }
             if (p == Phase.contacts) return state.loadContacts();
-            state.goTo(p);
+            if (p is Phase) state.goTo(p);
           },
           itemBuilder: (_) => const [
             PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
@@ -133,6 +148,11 @@ class _DevJump extends StatelessWidget {
               child: Text('4 - After the meetup'),
             ),
             PopupMenuItem(value: Phase.contacts, child: Text('5 - Numbers')),
+            PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'noshow',
+              child: Text('Preview no-show message'),
+            ),
           ],
         ),
       ),

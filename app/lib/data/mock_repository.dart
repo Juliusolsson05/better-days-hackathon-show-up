@@ -194,6 +194,16 @@ class MockRepository implements Repository {
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) =>
       Future.delayed(_lag);
 
+  /// Flipped by the dev-jump menu ("· flip no-show") so the flaking acknowledgement can be
+  /// rehearsed. There is no real attendance data in the mock to derive it from.
+  bool demoNoShow = false;
+
+  @override
+  Future<bool> wasMarkedNoShow(String groupId) async {
+    await Future.delayed(_lag);
+    return demoNoShow;
+  }
+
   Set<String> _selected = {};
   @override
   Future<void> selectContacts(String groupId, Set<String> selectedIds) async {

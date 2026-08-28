@@ -42,6 +42,11 @@ export async function embed(texts: string[]): Promise<number[][]> {
  * profile_vectors goes through here first.
  */
 export function center(v: number[], mean: number[]): number[] {
+  // A short mean silently produces NaNs for every dimension past its length, and NaN
+  // vectors sort to the front of a cosineDistance ranking. Fail here instead.
+  if (mean.length !== v.length) {
+    throw new Error(`centroid is ${mean.length} dims, embedding is ${v.length}`);
+  }
   return v.map((x, i) => x - mean[i]);
 }
 

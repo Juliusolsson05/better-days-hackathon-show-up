@@ -25,7 +25,7 @@ SELECT
     -- per element AND per row; a bare rand() inside a lambda gets folded to one value.
     arrayMap(
         i -> (a.embedding[i + 1] - m.mean[i + 1])
-             + (((rand(num.number * 256 + i) % 2000) / 1000.0) - 1.0) * 0.3,
+             + (((rand(num.number * 256 + i) % 2000) / 1000.0) - 1.0) * 0.05,
         range(256)
     ),
     a.tags,
@@ -39,18 +39,26 @@ SELECT
     (rand(num.number + 3) % 4) > 0
 FROM numbers(1000000) AS num
 INNER JOIN archetypes AS a ON a.id = (num.number % (SELECT count() FROM archetypes))
-CROSS JOIN (SELECT mean FROM embedding_mean LIMIT 1) AS m;
+CROSS JOIN (SELECT mean FROM embedding_mean LIMIT 1) AS m
+SETTINGS select_sequential_consistency = 1;
 
--- Sanity check. If distances here are all bunched between ~0.84 and ~0.87 the centering
--- did not take effect and every match downstream will be noise.
+-- Semantic sanity check. A distance-spread check is useless here: noise CREATES spread,
+-- so an over-jittered population passes it while being pure noise. The only thing worth
+-- asserting is that a profile's nearest neighbours came from its own archetype.
+--
+-- Want share_same_archetype close to 1.0. Below ~0.8 means the jitter is drowning the
+-- signal and every match downstream is a random number generator.
 SELECT
-    count()                    AS profiles,
-    length(any(embedding))     AS dims,
-    round(min(d), 4)           AS nearest,
-    round(max(d), 4)           AS farthest
+    count()                                  AS profiles,
+    length(any(embedding))                   AS dims,
+    round(avgIf(same, rn <= 10), 3)          AS share_same_archetype
 FROM
 (
-    SELECT embedding, cosineDistance(embedding, (SELECT embedding FROM profile_vectors LIMIT 1)) AS d
-    FROM profile_vectors
+    SELECT
+        row_number() OVER (ORDER BY cosineDistance(p.embedding, r.embedding) ASC) AS rn,
+        p.tags = r.tags AS same
+    FROM profile_vectors AS p
+    CROSS JOIN (SELECT embedding, tags FROM profile_vectors LIMIT 1) AS r
     LIMIT 50000
-);
+)
+WHERE rn > 1;

@@ -13,7 +13,7 @@ FROM
     SELECT
         user_id,
         windowFunnel(604800)(
-            ts,
+            toDateTime(ts),
             name = 'notif_sent',
             name = 'rsvp',
             name = 'attended',

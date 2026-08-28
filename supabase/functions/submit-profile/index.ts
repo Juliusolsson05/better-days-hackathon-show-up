@@ -4,7 +4,7 @@
 // Runs server-side rather than from the app because it holds three secrets the phone must
 // never see, and because the ClickHouse write has no client-safe equivalent.
 
-import { createClient } from 'npm:@supabase/supabase-js';
+import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
 import { ch, arr, populationMean, emit } from '../_shared/clickhouse.ts';
 import { embed, center, profileText, DIMS } from '../_shared/voyage.ts';
 import { extractTags } from '../_shared/claude.ts';
@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
       city: string; availability: string[]; photo_url?: string;
     };
 
-    await supabase.from('profiles').upsert({
+    const { error: upErr } = await supabase.from('profiles').upsert({
       id: uid,
       display_name: body.display_name,
       passion: body.passion,
@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
       availability: body.availability,
       photo_url: body.photo_url ?? null,
     });
+    if (upErr) throw upErr;
 
     // Embedding and tag extraction are independent -- no reason to pay for them serially.
     const [vectors, tags, mean] = await Promise.all([
@@ -72,7 +73,9 @@ Deno.serve(async (req) => {
       },
     );
 
-    await supabase.from('profiles').update({ embedded_at: new Date().toISOString() }).eq('id', uid);
+    const { error: stampErr } = await supabase.from('profiles')
+      .update({ embedded_at: new Date().toISOString() }).eq('id', uid);
+    if (stampErr) throw stampErr;
     await emit('signup', uid, null, { city: body.city, topics: tags.topics });
 
     return Response.json({ ok: true, tags });

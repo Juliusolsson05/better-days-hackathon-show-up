@@ -77,76 +77,85 @@ alter table messages       enable row level security;
 alter table reflections    enable row level security;
 alter table number_shares  enable row level security;
 
--- Helper: are these two users in the same group? Used by nearly every policy.
--- security definer so the function can read group_members without recursing through
--- group_members' own RLS policy.
-create or replace function shares_group_with(target uuid, grp uuid)
+-- RLS helpers.
+--
+-- These exist because a policy on group_members whose USING clause selects from
+-- group_members makes Postgres re-enter the same policy and raise 42P17
+-- "infinite recursion detected in policy". security definer breaks the loop: the
+-- function body runs as the owner, so the inner read is not itself RLS-filtered.
+--
+-- Every policy that needs "which groups am I in" goes through my_group_ids().
+create or replace function public.my_group_ids()
+returns setof uuid language sql stable security definer set search_path = public as $$
+    select group_id from group_members where user_id = auth.uid();
+$$;
+
+create or replace function public.shares_any_group_with(target uuid)
 returns boolean language sql stable security definer set search_path = public as $$
     select exists (
         select 1 from group_members a
-        join group_members b on a.group_id = b.group_id
-        where a.user_id = auth.uid() and b.user_id = target and a.group_id = grp
+        join group_members b using (group_id)
+        where a.user_id = auth.uid() and b.user_id = target
+    );
+$$;
+
+create or replace function public.has_shared_number(grp uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+    select exists (
+        select 1 from number_shares where group_id = grp and user_id = auth.uid()
+    );
+$$;
+
+create or replace function public.wrote_reflection_in(grp uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+    select exists (
+        select 1 from reflections where group_id = grp and user_id = auth.uid()
     );
 $$;
 
 create policy "read own profile" on profiles for select
     using (id = auth.uid());
--- You can see a groupmate's profile, but nothing about anyone you were not matched with.
--- There is no browse in this product, so there is no policy that lets you list people.
+-- You can see a groupmate's profile, but nothing about anyone you were not matched
+-- with. There is no browse in this product, so there is deliberately no policy
+-- anywhere that lets a user list people.
 create policy "read groupmate profiles" on profiles for select
-    using (exists (
-        select 1 from group_members a
-        join group_members b on a.group_id = b.group_id
-        where a.user_id = auth.uid() and b.user_id = profiles.id
-    ));
+    using (shares_any_group_with(profiles.id));
 create policy "write own profile" on profiles for all
     using (id = auth.uid()) with check (id = auth.uid());
 
 create policy "read own groups" on groups for select
-    using (exists (select 1 from group_members m
-                   where m.group_id = groups.id and m.user_id = auth.uid()));
+    using (id in (select my_group_ids()));
 
 create policy "read own membership" on group_members for select
-    using (exists (select 1 from group_members m
-                   where m.group_id = group_members.group_id and m.user_id = auth.uid()));
+    using (user_id = auth.uid() or group_id in (select my_group_ids()));
 
 create policy "read group rsvps" on rsvps for select
-    using (exists (select 1 from group_members m
-                   where m.group_id = rsvps.group_id and m.user_id = auth.uid()));
+    using (group_id in (select my_group_ids()));
+-- Membership check on write as well: without it any authenticated user could insert
+-- an RSVP into a group they were never assigned to.
 create policy "set own rsvp" on rsvps for all
-    using (user_id = auth.uid()) with check (user_id = auth.uid());
+    using (user_id = auth.uid())
+    with check (user_id = auth.uid() and group_id in (select my_group_ids()));
 
 create policy "read group messages" on messages for select
-    using (exists (select 1 from group_members m
-                   where m.group_id = messages.group_id and m.user_id = auth.uid()));
+    using (group_id in (select my_group_ids()));
 create policy "post as self" on messages for insert
-    with check (user_id = auth.uid() and exists (
-        select 1 from group_members m
-        where m.group_id = messages.group_id and m.user_id = auth.uid()));
+    with check (user_id = auth.uid() and group_id in (select my_group_ids()));
 
 -- Reflections are mutual and disclosed: you see what your pair wrote about you only
 -- once you have written yours.
 create policy "read reflections after writing own" on reflections for select
-    using (
-        about_user = auth.uid()
-        and exists (select 1 from reflections mine
-                    where mine.group_id = reflections.group_id and mine.user_id = auth.uid())
-    );
+    using (about_user = auth.uid() and wrote_reflection_in(reflections.group_id));
 create policy "write own reflection" on reflections for insert
-    with check (user_id = auth.uid());
+    with check (user_id = auth.uid() and group_id in (select my_group_ids()));
 
 -- THE reciprocity gate. Share your number and you see everyone else who shared; don't
 -- and you see nothing. This has to live here rather than in Dart -- if the client
 -- decides, the numbers have already been sent to the device and the gate is decorative.
 create policy "reciprocal disclosure only" on number_shares for select
-    using (exists (
-        select 1 from number_shares mine
-        where mine.group_id = number_shares.group_id and mine.user_id = auth.uid()
-    ));
+    using (has_shared_number(number_shares.group_id));
 create policy "share own number" on number_shares for insert
-    with check (user_id = auth.uid() and exists (
-        select 1 from group_members m
-        where m.group_id = number_shares.group_id and m.user_id = auth.uid()));
+    with check (user_id = auth.uid() and group_id in (select my_group_ids()));
 
 -- Realtime for the group chat. Without this the Flutter .stream() call silently
 -- returns the initial rows and then never updates again.

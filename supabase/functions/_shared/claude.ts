@@ -7,9 +7,9 @@
 // think about it. The tags extracted here are what stop the matcher from seating a vegan
 // next to a hunter and calling it a great match. Embedding = recall, tags = precision.
 
-import Anthropic from 'npm:@anthropic-ai/sdk';
-import { z } from 'npm:zod';
-import { zodOutputFormat } from 'npm:@anthropic-ai/sdk/helpers/zod';
+import Anthropic from 'npm:@anthropic-ai/sdk@0.71.0';
+import { z } from 'npm:zod@3.24.1';
+import { zodOutputFormat } from 'npm:@anthropic-ai/sdk@0.71.0/helpers/zod';
 
 const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
 
@@ -69,9 +69,11 @@ export async function planGroup(
 ): Promise<GroupPlan> {
   const res = await client.messages.parse({
     model: 'claude-opus-5',
-    max_tokens: 8000,
+    max_tokens: 16000,
     thinking: { type: 'adaptive' },
-    output_config: { format: zodOutputFormat(GroupPlan) },
+    // effort medium: thinking tokens count against max_tokens, and at high effort the
+    // structured object can be truncated mid-write, which surfaces as parsed_output null.
+    output_config: { format: zodOutputFormat(GroupPlan), effort: 'medium' },
     messages: [{
       role: 'user',
       content: `City: ${city}\n\n${members.map((m) =>

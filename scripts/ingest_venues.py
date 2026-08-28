@@ -151,17 +151,28 @@ def document(v: dict) -> str:
     return f"{v['name']}\nCategory: {kind}"
 
 
-def embed(texts, batch=128):
+# Seconds to wait between embedding requests. The free tier is limited per minute, and
+# reactive backoff alone does not work here: bursting exhausts the window, then every retry
+# arrives inside the same exhausted window and the run dies having embedded nothing. Pacing
+# proactively keeps every request inside the allowance instead of racing it.
+EMBED_INTERVAL_S = 21.0
+
+
+def embed(texts, batch=500):
     """input_type is null, matching the profile path in _shared/voyage.ts.
 
-    Retries on 429. A corpus this size is ~66 requests back to back, which is comfortably
-    over the free tier's per-minute allowance, so the first run without backoff dies a few
-    hundred venues in. Voyage sends Retry-After on a rate limit; honour it when present and
-    fall back to exponential backoff when it is not.
+    Paced rather than burst. Venue documents are ~15 tokens each, so a 500-item batch is
+    ~7.5k tokens -- comfortably inside both the model's context and a conservative
+    per-minute token allowance. This corpus is then ~17 requests and about six minutes.
+
+    Still retries on 429, honouring Retry-After when Voyage sends it, as a safety net for
+    a tighter account limit than the pacing assumes.
     """
     out = []
     for i in range(0, len(texts), batch):
         chunk = texts[i:i + batch]
+        if i:
+            time.sleep(EMBED_INTERVAL_S)
         for attempt in range(8):
             res = requests.post(
                 "https://api.voyageai.com/v1/embeddings",

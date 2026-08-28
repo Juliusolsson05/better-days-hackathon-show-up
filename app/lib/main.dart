@@ -53,7 +53,13 @@ Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Before runApp so a tap that cold-started the app is already queued when the shell
   // subscribes. Deliberately does NOT prompt for permission -- see NotificationService.
-  await NotificationService.instance.init();
+  // Wrapped because a device with the plugin missing or unregistered must still boot:
+  // losing the ladder degrades the experience, a crash on the splash screen ends it.
+  try {
+    await NotificationService.instance.init();
+  } catch (error, stack) {
+    debugPrint('[ladder] init failed, notifications disabled: $error\n$stack');
+  }
   if (_useSupabase) {
     assert(
       _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,

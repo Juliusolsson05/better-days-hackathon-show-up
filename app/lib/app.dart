@@ -183,6 +183,70 @@ class _DevJump extends StatelessWidget {
   final AppState state;
   const _DevJump(this.state);
 
+  Future<void> _select(BuildContext context, Object p) async {
+    if (p == 'noshow') {
+      // Preview the flaking acknowledgement. There is no attendance data in the
+      // mock to derive it from, so flip the flag and show the sheet directly.
+      if (state.repo is MockRepository) {
+        (state.repo as MockRepository).demoNoShow = true;
+      }
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: surface,
+        isScrollControlled: true,
+        builder: (_) => const NoShowSheet(),
+      );
+      return;
+    }
+
+    if (p == Phase.matched && state.group == null) {
+      // Mock: fabricate a group. Real backend: just fetch whatever run-matching
+      // has already written for this user. Keep the type guard here because a
+      // release-like Supabase rehearsal must never mutate server state through
+      // a control that only exists to compress the three-day demo timeline.
+      final repo = state.repo;
+      if (repo is MockRepository) repo.formGroup();
+      await state.enterGroup();
+      return;
+    }
+
+    if (p == Phase.after || p == Phase.contacts) {
+      // These screens require both a group and its private assignment. Changing only the enum was
+      // enough to render the route but left AfterFlow dereferencing null from a fresh launch. The
+      // fixture is still created only by MockRepository; a Supabase rehearsal can fast-forward
+      // solely when the backend already owns a real group for this user.
+      final repo = state.repo;
+      if (repo is MockRepository && state.group == null) repo.formGroup();
+      try {
+        final ready = await state.prepareGroupForDemo();
+        if (!context.mounted) return;
+        if (!ready) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No event is ready for post-event feedback yet.'),
+            ),
+          );
+          return;
+        }
+        if (p == Phase.contacts) {
+          await state.loadContacts();
+        } else {
+          state.goTo(Phase.after);
+        }
+      } catch (_) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not prepare the post-event demo.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (p is Phase) state.goTo(p);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Positioned(
@@ -196,34 +260,7 @@ class _DevJump extends StatelessWidget {
             backgroundColor: ink,
             child: Icon(Icons.fast_forward, size: 18, color: accent),
           ),
-          onSelected: (p) async {
-            if (p == 'noshow') {
-              // Preview the flaking acknowledgement. There is no attendance data in the
-              // mock to derive it from, so flip the flag and show the sheet directly.
-              if (state.repo is MockRepository) {
-                (state.repo as MockRepository).demoNoShow = true;
-              }
-              await showModalBottomSheet<void>(
-                context: context,
-                backgroundColor: surface,
-                isScrollControlled: true,
-                builder: (_) => const NoShowSheet(),
-              );
-              return;
-            }
-            if (p == Phase.matched && state.group == null) {
-              // Mock: fabricate a group. Real backend: just fetch whatever run-matching
-              // has already written for this user. Keep the type guard here because a
-              // release-like Supabase rehearsal must never mutate server state through
-              // a control that only exists to compress the three-day demo timeline.
-              final repo = state.repo;
-              if (repo is MockRepository) repo.formGroup();
-              await state.enterGroup();
-              return;
-            }
-            if (p == Phase.contacts) return state.loadContacts();
-            if (p is Phase) state.goTo(p);
-          },
+          onSelected: (p) => _select(context, p),
           itemBuilder: (_) => const [
             PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
             PopupMenuItem(value: Phase.home, child: Text('2 - Home')),
@@ -234,7 +271,7 @@ class _DevJump extends StatelessWidget {
             ),
             PopupMenuItem(
               value: Phase.after,
-              child: Text('4 - After the meetup'),
+              child: Text('4 - Post-event feedback'),
             ),
             PopupMenuItem(value: Phase.contacts, child: Text('5 - Numbers')),
             PopupMenuDivider(),

@@ -46,11 +46,6 @@ class ContactsScreen extends StatelessWidget {
               ),
             ),
           ] else ...[
-            Text(
-              '${contacts.length} of you picked each other.',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 20),
             for (final contact in contacts)
               Container(
                 margin: const EdgeInsets.only(bottom: 12),

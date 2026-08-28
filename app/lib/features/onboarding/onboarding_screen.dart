@@ -41,21 +41,46 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _name.text.trim().isNotEmpty && _passion.text.trim().length > 10 &&
       _picked.isNotEmpty && _avail.isNotEmpty;
 
+  static const _maxExtraTags = 8;
+
   Future<void> _pickPhoto() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1200,
-      imageQuality: 82,
-    );
-    if (picked != null) setState(() => _photo = picked);
+    if (_busy) return;
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        imageQuality: 82,
+      );
+      if (picked != null && mounted) setState(() => _photo = picked);
+    } catch (_) {
+      // Permission denied, or the picker channel threw. Nothing actionable to show
+      // beyond letting them try again.
+      if (mounted) _toast('Could not open your photos. Check the app permission.');
+    }
   }
 
   void _addCustomTag() {
-    final tag = _customTag.text.trim().toLowerCase();
-    if (tag.isEmpty || _picked.contains(tag)) return;
+    // Collapse whitespace, drop a leading '#', cap the length so one tag can't blow out
+    // the chip row.
+    final tag = _customTag.text
+        .trim()
+        .toLowerCase()
+        .replaceFirst(RegExp(r'^#+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (tag.isEmpty) return;
+    if (_picked.contains(tag)) {
+      _customTag.clear();
+      return;
+    }
+    if (_extraTags.length >= _maxExtraTags) {
+      _toast('That is plenty of interests to match on.');
+      return;
+    }
     setState(() {
-      if (!_interests.contains(tag)) _extraTags.add(tag);
-      _picked.add(tag);
+      final known = _interests.contains(tag) || _extraTags.contains(tag);
+      if (!known) _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      _picked.add(known ? tag : _extraTags.last);
       _customTag.clear();
     });
   }
@@ -73,10 +98,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't create your profile. $e")),
-      );
+      final offline = e.toString().toLowerCase().contains('socket') ||
+          e.toString().toLowerCase().contains('clientexception');
+      _toast(offline
+          ? "Couldn't reach the server. Check your connection and try again."
+          : "Couldn't create your profile. Give it another go.");
     }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -92,6 +125,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Show Up')),
       body: ListView(
+        // Scrolling away from a field should close its keyboard.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
           const Text('You go alone. So does everyone else.',
@@ -102,32 +137,42 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 28),
 
           const _Label('What should people call you?'),
-          TextField(controller: _name, onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(hintText: 'First name')),
+          TextField(
+            controller: _name,
+            onChanged: (_) => setState(() {}),
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(hintText: 'First name', counterText: ''),
+          ),
           const SizedBox(height: 24),
 
           const _Label('Add a photo'),
           Text('Anything but your face — a view, a plant, your dog.',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
           const SizedBox(height: 10),
-          GestureDetector(
-            onTap: _pickPhoto,
-            child: Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: surface,
-                shape: BoxShape.circle,
-                border: Border.all(
-                    color: _photo == null ? Colors.white24 : accent, width: 2),
-                image: _photo == null
-                    ? null
-                    : DecorationImage(
-                        image: FileImage(File(_photo!.path)), fit: BoxFit.cover),
+          Semantics(
+            button: true,
+            label: _photo == null ? 'Add a photo' : 'Change photo',
+            child: GestureDetector(
+              onTap: _pickPhoto,
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: _photo == null ? Colors.white24 : accent, width: 2),
+                  image: _photo == null
+                      ? null
+                      : DecorationImage(
+                          image: FileImage(File(_photo!.path)), fit: BoxFit.cover),
+                ),
+                child: _photo == null
+                    ? const Icon(Icons.add_a_photo_outlined, color: Colors.white38)
+                    : null,
               ),
-              child: _photo == null
-                  ? const Icon(Icons.add_a_photo_outlined, color: Colors.white38)
-                  : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -165,9 +210,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: TextField(
                 controller: _customTag,
                 onSubmitted: (_) => _addCustomTag(),
+                maxLength: 24,
+                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(
                   hintText: 'Add your own — anime, pokemon, whatever',
                   isDense: true,
+                  counterText: '',
                 ),
               ),
             ),
@@ -179,7 +227,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           // The free-text field is what the embedding is actually built from.
           const _Label('What are you passionate about?'),
           TextField(
-            controller: _passion, maxLines: 4, onChanged: (_) => setState(() {}),
+            controller: _passion,
+            maxLines: 4,
+            maxLength: 280,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
               hintText: 'The thing you would talk about all night if someone let you.'),
           ),

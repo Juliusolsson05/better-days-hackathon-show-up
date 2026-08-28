@@ -23,16 +23,19 @@ class MockRepository implements Repository {
   final _venues = const [
     VenueOption(
       id: 'v1', name: 'Kinship', address: '2801 Mission St',
+      lat: 37.7522, lng: -122.4185,
       pitch: 'Small plates, no TVs, a back room quiet enough to actually hear each other.',
       categories: ['cocktail bars', 'tapas'],
     ),
     VenueOption(
       id: 'v2', name: 'Dogpatch Boulders', address: '2573 3rd St',
+      lat: 37.7562, lng: -122.3885,
       pitch: 'Intro session at 7. Nobody has to make conversation while holding a rope.',
       categories: ['climbing', 'active'],
     ),
     VenueOption(
       id: 'v3', name: 'Four Star Cafe', address: '2200 Mission St',
+      lat: 37.7620, lng: -122.4193,
       pitch: 'Coffee and a long table. The low-key option if a bar feels like a lot.',
       categories: ['cafes'],
     ),

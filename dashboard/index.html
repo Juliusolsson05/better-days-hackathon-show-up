@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Show Up — the numbers</title>
+
+<!--
+  The judge-facing dashboard. This is the demo's closing slide (docs/DESIGN.md §6): the
+  argument that Show Up is a measurable claim about what produces friendship, not just an
+  app.
+
+  WHY a standalone static file and not a screen in the Flutter app:
+    - It is shown on a laptop/projector while the demo phone runs the app. Putting it
+      inside the phone build makes the "closing slide" a thing you have to screen-mirror.
+    - The `analytics` edge function already sets `Access-Control-Allow-Origin: *`
+      specifically so a browser page can call it (see its header comment).
+    - Zero build step, no dependencies, no framework: open the file, it runs. One less
+      thing to have break at 5:04pm.
+
+  WHY it reads config from the URL / localStorage instead of being hardcoded:
+    - The Supabase URL + anon key are environment-specific (local stack vs cloud) and the
+      anon key is "public by design" (.env.example) -- RLS is what protects data, and this
+      function does not even touch a protected table. Safe to paste into a field on the
+      presenter's own machine; not safe to commit.
+-->
+
+<style>
+  /* Palette lifted from the app (app/lib/core/theme.dart) so the dashboard reads as the
+     same product when it follows the phone on screen. */
+  :root {
+    --bg: #14110F;
+    --surface: #1E1A17;
+    --surface-2: #262019;
+    --accent: #E8734A;
+    --text: #F2ECE6;
+    --muted: #9a8f84;
+    --track: #322a22;
+    --drop: #7d3b2a;
+    --ok: #6bbf8a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body { padding: clamp(20px, 4vw, 56px); max-width: 1100px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 8px;
+  }
+  h1 { font-size: clamp(24px, 3.4vw, 40px); font-weight: 800; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 15px; margin-bottom: 36px; }
+
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .dot.stale { background: var(--muted); }
+  .dot.err { background: var(--drop); }
+
+  section { margin-bottom: 40px; }
+  h2 {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin-bottom: 18px;
+  }
+  .caption { font-size: 13px; color: var(--muted); margin-top: 12px; }
+
+  /* ---- Funnel: the headline chart ---- */
+  .stage { margin-bottom: 14px; }
+  .stage-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    margin-bottom: 6px;
+  }
+  .stage-name { font-size: 15px; }
+  .stage-name.win { color: var(--accent); font-weight: 700; }
+  .stage-figures { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+  .stage-figures b { color: var(--text); font-size: 20px; font-weight: 700; margin-right: 6px; }
+  .bar { height: 30px; background: var(--track); border-radius: 7px; overflow: hidden; }
+  .bar > i {
+    display: block; height: 100%; background: var(--surface-2);
+    border-right: 2px solid var(--accent);
+    transition: width .5s ease;
+  }
+  .stage.win .bar > i { background: color-mix(in srgb, var(--accent) 28%, var(--surface-2)); }
+  .drop { font-size: 12px; color: var(--drop); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Small multiples for cohesion + volume ---- */
+  .rows { display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 130px 1fr 56px; align-items: center; gap: 12px; }
+  .row .k { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .row .t { height: 20px; background: var(--track); border-radius: 5px; overflow: hidden; }
+  .row .t > i { display: block; height: 100%; background: var(--accent); opacity: .55; }
+  .row .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  footer {
+    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--track);
+    color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  footer b { color: var(--text); }
+
+  /* ---- Operator controls ----
+     A <details> so it is collapsed by default: the service-role key must not be sitting
+     on screen while the funnel is projected. Expand it, run the sweep, collapse it. */
+  .control {
+    margin-bottom: 34px; border: 1px solid var(--drop); border-radius: 12px;
+    background: color-mix(in srgb, var(--drop) 9%, var(--surface));
+  }
+  .control > summary {
+    cursor: pointer; padding: 12px 16px; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--drop);
+    list-style: none;
+  }
+  .control > summary::-webkit-details-marker { display: none; }
+  .control > summary::before { content: "▸ "; }
+  .control[open] > summary::before { content: "▾ "; }
+  .control .body { padding: 4px 16px 18px; }
+  .control .warn { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .control .grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .control label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .control input, .control select {
+    padding: 10px 12px; border-radius: 9px; border: 1px solid var(--track);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+  }
+  .control input#c-key { min-width: 320px; flex: 1; }
+  .control button {
+    padding: 10px 18px; border: 0; border-radius: 10px; background: var(--accent);
+    color: #1a1206; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .control button:disabled { opacity: .5; cursor: default; }
+  .control .out { margin-top: 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .control .out.ok { color: var(--ok); }
+  .control .out.bad { color: var(--drop); }
+
+  /* ---- Config gate ---- */
+  .gate { max-width: 460px; margin: 8vh auto; }
+  .gate label { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+  .gate input {
+    width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--track);
+    background: var(--surface); color: var(--text); font: inherit; font-size: 14px;
+  }
+  .gate button, .retry {
+    margin-top: 22px; padding: 12px 20px; border: 0; border-radius: 12px;
+    background: var(--accent); color: #1a1206; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .err-box { color: var(--drop); font-size: 14px; margin: 12px 0; }
+  .skeleton { opacity: .4; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- Config gate: shown only when we have no url+key from query string or localStorage. -->
+<div id="gate" class="gate hidden">
+  <h1>Show <span>Up</span></h1>
+  <p class="sub">Point this at your Supabase project to read the funnel.</p>
+  <label for="g-url">Supabase URL</label>
+  <input id="g-url" placeholder="https://xxxx.supabase.co  ·  or  http://127.0.0.1:54321" autocomplete="off">
+  <label for="g-key">Anon key</label>
+  <input id="g-key" placeholder="eyJ… (public by design; stored only in this browser)" autocomplete="off">
+  <button id="g-go">Connect</button>
+</div>
+
+<!-- The dashboard proper. -->
+<div id="dash" class="hidden">
+  <header>
+    <h1>Show <span>Up</span> — the numbers</h1>
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="statusText">connecting…</span>
+    </div>
+  </header>
+  <p class="sub">Notified → RSVP’d → attended → left with each other’s numbers. The last bar is the point of the product.</p>
+
+  <!--
+    Operator controls. There is no other trigger for run-matching yet: pg_cron is the
+    production path (not set up), and the phone app can't call it because the function
+    gates on the service-role key, which must never ship in a client binary. So the sweep
+    is run from here, from a laptop, by whoever is driving the demo.
+  -->
+  <details id="control" class="control">
+    <summary>Operator controls — run the sweep</summary>
+    <div class="body">
+      <p class="warn">
+        The service-role key bypasses row-level security entirely. Paste it only on your
+        own machine; it is kept in this browser’s localStorage and sent only to
+        <code>/functions/v1/run-matching</code>. Collapse this panel before projecting.
+      </p>
+      <div class="grid">
+        <div>
+          <label for="c-key">Service-role key</label>
+          <input id="c-key" type="password" placeholder="eyJ… service_role" autocomplete="off">
+        </div>
+        <div>
+          <label for="c-city">City</label>
+          <input id="c-city" value="SF" size="6">
+        </div>
+        <div>
+          <label for="c-slot">Slot</label>
+          <select id="c-slot">
+            <option>fri_eve</option>
+            <option>sat_day</option>
+            <option>sat_eve</option>
+            <option>sun_day</option>
+          </select>
+        </div>
+        <button id="c-run">Run the sweep</button>
+      </div>
+      <div id="c-out" class="out"></div>
+    </div>
+  </details>
+
+  <div id="errArea" class="hidden">
+    <p class="err-box" id="errMsg"></p>
+    <button class="retry" onclick="load()">Retry</button>
+  </div>
+
+  <section id="funnelSection">
+    <h2>The funnel · last 30 days</h2>
+    <div id="funnel"></div>
+  </section>
+
+  <section id="cohesionSection">
+    <h2>Where groups landed on the match-tightness scale</h2>
+    <div class="rows" id="cohesion"></div>
+    <p class="caption">
+      Seed distance = how far the seed member sat from the rest of their group. Lower is a
+      tighter match. The demo claim is that the left side of this axis converts better —
+      the funnel above is the whole population; a per-bucket funnel needs the analytics
+      function to cross <code>windowFunnel</code> with this bucket.
+    </p>
+  </section>
+
+  <section id="volumeSection">
+    <h2>Events · last 7 days</h2>
+    <div class="rows" id="volume"></div>
+  </section>
+
+  <footer id="scanned"></footer>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ config */
+
+// Order of precedence: ?url=&key= in the address bar wins (easy to script for a demo),
+// then whatever a previous session saved. We persist to localStorage so a reload during
+// the demo does not send you back to the gate.
+const params = new URLSearchParams(location.search);
+let CFG = {
+  url: (params.get("url") || localStorage.getItem("su_url") || "").replace(/\/+$/, ""),
+  key: params.get("key") || localStorage.getItem("su_key") || "",
+};
+
+const $ = (id) => document.getElementById(id);
+
+function saveCfg(url, key) {
+  CFG = { url: url.replace(/\/+$/, ""), key };
+  localStorage.setItem("su_url", CFG.url);
+  localStorage.setItem("su_key", CFG.key);
+}
+
+/* ------------------------------------------------------------------ fetch */
+
+// WHY only an Authorization header and nothing else:
+//   The analytics function replies with `Access-Control-Allow-Headers: authorization,
+//   content-type`. Adding an `apikey` header (the other way to authenticate to Supabase)
+//   would make the CORS preflight fail, because `apikey` is not on that list. A GET needs
+//   no content-type. The anon key is itself a valid JWT, so `Bearer <anon key>` satisfies
+//   the platform gateway whether or not the function is deployed with verify_jwt on.
+async function fetchAnalytics() {
+  const res = await fetch(`${CFG.url}/functions/v1/analytics`, {
+    headers: { Authorization: `Bearer ${CFG.key}` },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.error) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return body;
+}
+
+/* ------------------------------------------------------------------ render */
+
+const FUNNEL_STAGES = [
+  // Index here is the windowFunnel step number. The function's query lists the steps as
+  // notif_sent, rsvp, attended, number_shared -- so a user's `level` is the furthest of
+  // these they reached, 0..4.
+  { step: 1, name: "Notified" },
+  { step: 2, name: "RSVP’d" },
+  { step: 3, name: "Attended" },
+  { step: 4, name: "Left with a number", win: true },
+];
+
+function renderFunnel(rows) {
+  // rows: [{ level, people }]. ClickHouse only returns levels that occurred, so fold into
+  // a dense array first.
+  const byLevel = [0, 0, 0, 0, 0];
+  let total = 0;
+  for (const r of rows || []) {
+    const lvl = Number(r.level);
+    const n = Number(r.people);
+    if (lvl >= 0 && lvl <= 4) byLevel[lvl] = n;
+    total += n;
+  }
+
+  if (total === 0) {
+    $("funnel").innerHTML =
+      `<p class="caption">No tracked users yet — the first signup will show up here.</p>`;
+    return;
+  }
+
+  // A funnel bar is cumulative: everyone who got at least this far. reached(step) is the
+  // sum of people whose max level was >= step.
+  const reached = (step) => byLevel.slice(step).reduce((a, b) => a + b, 0);
+
+  let prev = total;
+  $("funnel").innerHTML = FUNNEL_STAGES.map((s) => {
+    const n = reached(s.step);
+    const pct = (n / total) * 100;
+    const dropN = prev - n;
+    const dropPct = prev ? (dropN / prev) * 100 : 0;
+    prev = n;
+    return `
+      <div class="stage ${s.win ? "win" : ""}">
+        <div class="stage-head">
+          <span class="stage-name ${s.win ? "win" : ""}">${s.name}</span>
+          <span class="stage-figures"><b>${n.toLocaleString()}</b>${pct.toFixed(0)}% of ${total.toLocaleString()}</span>
+        </div>
+        <div class="bar"><i style="width:${Math.max(pct, 1.5)}%"></i></div>
+        ${dropN > 0 ? `<div class="drop">−${dropN.toLocaleString()} dropped here (${dropPct.toFixed(0)}%)</div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+function renderBars(elId, rows, keyName, keyFmt) {
+  const el = $(elId);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = `<p class="caption">Nothing recorded yet.</p>`;
+    return;
+  }
+  const max = Math.max(...rows.map((r) => Number(r.n) || 0), 1);
+  el.innerHTML = rows.map((r) => {
+    const n = Number(r.n) || 0;
+    return `
+      <div class="row">
+        <span class="k">${keyFmt(r[keyName])}</span>
+        <span class="t"><i style="width:${(n / max) * 100}%"></i></span>
+        <span class="v">${n.toLocaleString()}</span>
+      </div>`;
+  }).join("");
+}
+
+function renderScanned(stats) {
+  // docs/DESIGN.md §4.7: put ClickHouse's own report of the scan on screen rather than
+  // claiming a number ourselves. `elapsed` is seconds (ClickHouse JSON statistics block).
+  if (!stats) { $("scanned").textContent = ""; return; }
+  const rowsRead = Number(stats.rows_read ?? stats.rowsRead ?? 0);
+  const elapsed = Number(stats.elapsed ?? 0);
+  $("scanned").innerHTML =
+    `ClickHouse scanned <b>${rowsRead.toLocaleString()}</b> rows in ` +
+    `<b>${(elapsed * 1000).toFixed(0)} ms</b> to build the funnel above — full scan, no index.`;
+}
+
+/* ------------------------------------------------------------------ loop */
+
+let timer = null;
+let lastOk = 0;
+
+function setStatus(kind, text) {
+  const dot = $("dot");
+  dot.className = "dot" + (kind === "stale" ? " stale" : kind === "err" ? " err" : "");
+  $("statusText").textContent = text;
+}
+
+async function load() {
+  $("errArea").classList.add("hidden");
+  try {
+    const data = await fetchAnalytics();
+    renderFunnel(data.funnel);
+    renderBars("cohesion", data.cohesion, "bucket", (b) => `seed dist ${Number(b).toFixed(1)}`);
+    renderBars("volume", data.volume, "name", (s) => String(s).replace(/_/g, " "));
+    renderScanned(data.scanned);
+    lastOk = Date.now();
+    setStatus("ok", "live · updated just now");
+  } catch (e) {
+    setStatus("err", "can’t reach analytics");
+    $("errMsg").textContent =
+      `${e.message}. Check the URL and anon key, and that the analytics function is ` +
+      `deployed (supabase functions deploy analytics).`;
+    $("errArea").classList.remove("hidden");
+  }
+}
+
+// Keep the numbers moving during a demo without hammering ClickHouse: a 15s poll is plenty
+// when the audience is RSVPing in real time, and the "updated Ns ago" text degrades to
+// grey so a wedged tab is obvious from the back of the room.
+function startLoop() {
+  load();
+  clearInterval(timer);
+  timer = setInterval(() => {
+    load();
+  }, 15000);
+  setInterval(() => {
+    if (!lastOk) return;
+    const age = Math.round((Date.now() - lastOk) / 1000);
+    if (age > 25) setStatus("stale", `last update ${age}s ago`);
+  }, 5000);
+}
+
+/* ------------------------------------------------------------------ operator */
+
+// Trigger the weekly sweep. Same origin story as fetchAnalytics: run-matching now sets
+// CORS (its header comment always said it is browser-triggered), so a POST from this page
+// works. The key here is the SERVICE-ROLE key, not the anon key -- run-matching compares
+// the bearer token to SUPABASE_SERVICE_ROLE_KEY exactly, because a sweep writes groups for
+// people who are not the caller and must not be triggerable from a shipped app.
+async function runSweep() {
+  const btn = $("c-run");
+  const out = $("c-out");
+  const key = $("c-key").value.trim();
+  const city = $("c-city").value.trim() || "SF";
+  const slot = $("c-slot").value;
+
+  if (!key) { out.className = "out bad"; out.textContent = "Paste the service-role key first."; return; }
+  localStorage.setItem("su_service_key", key);
+
+  btn.disabled = true;
+  out.className = "out";
+  out.textContent = `Running the sweep for ${city} / ${slot}…`;
+
+  try {
+    const res = await fetch(`${CFG.url}/functions/v1/run-matching`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ city, slot }),
+    });
+    if (res.status === 403) {
+      out.className = "out bad";
+      out.textContent = "Rejected (403) — that is not the service-role key.";
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) {
+      out.className = "out bad";
+      out.textContent = body.error || `HTTP ${res.status}`;
+      return;
+    }
+    if (body.reason === "empty pool") {
+      out.className = "out bad";
+      out.textContent = `Empty pool — no embedded profiles in ${city} / ${slot} yet. Sign some up.`;
+      return;
+    }
+    out.className = "out ok";
+    out.textContent =
+      `Formed ${body.groups} group${body.groups === 1 ? "" : "s"} · ` +
+      `${body.unmatched} unmatched · ${body.skipped} skipped.`;
+    // The sweep just emitted group_formed events; pull the funnel forward now rather than
+    // waiting up to 15s for the next poll.
+    load();
+  } catch (e) {
+    out.className = "out bad";
+    out.textContent = `${e.message} — is run-matching deployed?`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ------------------------------------------------------------------ boot */
+
+function showGate() {
+  $("gate").classList.remove("hidden");
+  $("dash").classList.add("hidden");
+  $("g-url").value = CFG.url;
+  $("g-key").value = CFG.key;
+  $("g-go").onclick = () => {
+    const url = $("g-url").value.trim();
+    const key = $("g-key").value.trim();
+    if (!url || !key) return;
+    saveCfg(url, key);
+    showDash();
+  };
+}
+
+function showDash() {
+  $("gate").classList.add("hidden");
+  $("dash").classList.remove("hidden");
+  $("c-key").value = localStorage.getItem("su_service_key") || "";
+  $("c-run").onclick = runSweep;
+  startLoop();
+}
+
+if (CFG.url && CFG.key) showDash();
+else showGate();
+</script>
+</body>
+</html>

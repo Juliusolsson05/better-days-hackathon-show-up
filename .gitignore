@@ -16,3 +16,6 @@ supabase/.temp
 
 __pycache__/
 *.pyc
+
+# Agent worktrees are checkouts of this repo, not content of it.
+.claude/

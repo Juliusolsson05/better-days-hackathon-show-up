@@ -2,6 +2,34 @@
 
 How a formed group gets 2–3 real venue options to vote on inside the group chat.
 
+## Current integration tranche
+
+Issues #20 and #21 finish the boundary that the first corpus/retrieval tranche deliberately
+left open. The live 9,076-row corpus is already verified and is therefore **an input to this
+work, not something this work rebuilds**.
+
+The implementation order is:
+
+1. Make profile seeding replace only centroid `id = 1`; a profile bootstrap must never erase
+   the independent venue centroid at `id = 2`.
+2. Promote only the venue-voting portion of the old draft as migration `0003`. Do not carry
+   along the unrelated `cohesion` rename: changing an established matching contract merely to
+   obtain voting tables couples two failure domains again.
+3. Persist generated options through one service-role-only Postgres function. The function
+   owns both the options and their chat card in one transaction, and returns the existing rows
+   on retry so a timeout cannot create a second ballot or pay for another retrieval.
+4. Cast ballots through a database function rather than a client table upsert. This is what
+   makes the cross-group option invariant enforceable and lets the database select a winner
+   only after every current group member has voted. Ties resolve by displayed position so the
+   result is deterministic and replayable.
+5. Read options, the caller's private ballot, and the anonymous tally through the Flutter
+   repository seam. The phone never receives anyone else's ballot.
+
+The existing `groups.venue` JSON remains as a backwards-compatible fallback for groups made
+before this migration. New real options take precedence whenever they exist. Removing that
+legacy column belongs in a later migration after every deployed caller has moved; doing it in
+the integration change would turn a reversible rollout into a flag day.
+
 Supersedes `VENUE_MATCHING.md`. Revised after two adversarial reviews, both of which ran real
 tests rather than arguing: DuckDB against the live Overture bucket, and the proposed SQL
 against a real ClickHouse. **Every number in this document was measured, not estimated.**

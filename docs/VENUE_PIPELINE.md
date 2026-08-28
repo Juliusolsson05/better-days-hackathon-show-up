@@ -1,475 +1,353 @@
 # Venue pipeline — implementation plan
 
-How a formed group gets 2–3 real venue options to vote on.
+How a formed group gets 2–3 real venue options to vote on inside the group chat.
 
-**This supersedes `VENUE_MATCHING.md`.** That document proposed pulling ~300 venues from
-Yelp once, committing `venues.jsonl`, and embedding it. That plan is not legally available
-to us, and the retrieval algorithm it sketched has a failure mode that would have made every
-group get the same recommendation. Both are corrected here. §1 is the blocker, §2 is the
-corrected architecture, §3 is the matching algorithm, §4 is how it is isolated in the tree.
+Supersedes `VENUE_MATCHING.md`. Revised after two adversarial reviews, both of which ran real
+tests rather than arguing: DuckDB against the live Overture bucket, and the proposed SQL
+against a real ClickHouse. **Every number in this document was measured, not estimated.**
 
 ---
 
-## 1. The blocker: Yelp content cannot be stored or embedded
+## 0. What is verified
 
-Yelp's API Terms of Use, in the operative clauses:
+```
+Overture places, release 2026-08-19.0 — public S3, no credentials, no account
+  9.8 GiB across 16 unpartitioned parquet files
+  SF bbox extract:  59,063 places in ~15 s   (bbox row-group stats prune the scan)
 
-> …cache, record, pre-fetch, or otherwise store any portion of the Yelp Content for a period
-> longer than **twenty-four (24) hours** from receipt.
+  45,860  confidence > 0.7
+  37,153  confidence > 0.7 AND operating_status = 'open'
+   6,661  social venues (bar 791, coffee_shop 481, cafe 411, music_venue 166, brewery 44)
+```
 
-> …use it to update or **create your own database of business listing information**.
+The ClickHouse SQL in §3.2, executed against a live server: nested
+`{members:Array(Array(Float32))}` params work over HTTP, `cosineDistance` accepts a
+lambda-bound array, `arrayAvg`/`arrayMin` are real, and `greatCircleDistance(lon,lat,lon,lat)`
+returns 559,254 m for SF→LA — argument order correct.
 
-> …create derivative works based on the Yelp Content for the purpose of **training,
-> developing, enhancing, or fine-tuning any Generative AI Models**.
-
-Three separate clauses, and our previous plan violated all three:
-
-| What we planned | Which clause it breaks |
-|---|---|
-| Commit `venues.jsonl` to the repo | 24-hour cache limit |
-| Load it into `venue_vectors` and keep it | "your own database of business listing information" |
-| Embed the review text into vectors | derivative works / GenAI clause |
-
-An embedding **is** a derivative work of the text it was computed from, and a vector table
-persisted in ClickHouse **is** a database of business listings. There is no reading of these
-terms where a committed, embedded Yelp corpus is permitted.
-
-There is a second, independent reason the old plan does not work: **the quota is too small
-to build a corpus anyway.** The trial is 300 calls/day (5,000 over 30 days), review excerpts
-are a separate call per business, capped at 3 reviews of 160 characters each, and the reviews
-endpoint requires the Enhanced or Premium plan. Pulling 300 venues *with* review text is 600
-calls — twice the daily quota — to obtain at most 480 characters of text per venue.
-
-So: even setting the licence aside, Yelp cannot be the corpus. It is too expensive per row,
-too thin per row, and legally unstorable.
-
-**This is worth internalising rather than working around.** The instinct will be to cache it
-anyway "just for the demo." Don't. Judges include engineers from companies with real legal
-functions, the terms are public, and "we ignored the licence" is a worse answer than any
-technical shortcoming. The corrected design below is also genuinely better, so there is
-nothing to trade off.
+**The corpus is not the schedule risk the previous revision implied. Stage 1 is ~15 minutes.**
 
 ---
 
-## 2. Corrected architecture: an owned corpus plus an ephemeral enrichment layer
+## 1. Why Yelp cannot be the corpus
 
-Two sources with completely different legal and technical characters, kept strictly apart.
+Three clauses, in the order that actually settles it:
 
-```
-   OWNED (Apache 2.0 / CDLA)                 EPHEMERAL (Yelp, ≤24h)
-   ─────────────────────────                 ──────────────────────
-   Overture Maps places                      /v3/businesses/{id}
-        │  bbox = Bay Area                        │  live, at display time
-        ▼                                         ▼
-   venue_vectors (ClickHouse)               in-memory / TTL cache only
-   name, category, geo, embedding           hours, rating, price, noise,
-        │                                   ambience, wheelchair access
-        │  cosineDistance scan                    │
-        ▼                                         │
-   candidate venues ────────────────────────► enriched for display ──► group chat vote
-```
+**5(a) — the 24-hour rule.** No caching, recording, pre-fetching or storing of Yelp Content
+beyond 24 hours from receipt. This alone ends the argument, whatever you call the artefact.
 
-### 2.1 The owned corpus: Overture Maps places
+**9.3 — the retrieval-system clause.** Extends the model prohibition to *"any other databases,
+models, or systems designed for processing, understanding, or generating output based on
+natural language."* A vector index over Yelp text is squarely that.
 
-[Overture Maps](https://docs.overturemaps.org/guides/places/) is the right spine:
+**9.4 — no LLM ingestion, with no purpose qualifier.** *"Submit or ingest **any** Yelp Content
+into **any** Generative AI Model (e.g., prompts that contain any Yelp Content)."* There is no
+display-copy exemption. Any Yelp-derived field reaching a Claude prompt is a breach —
+including a `noise_level` used to write a venue pitch.
 
-- **Licence**: CDLA Permissive 2.0, with the Foursquare-sourced subset under Apache 2.0.
-  Both permit storage, derivative works, and commercial use. We can embed it and keep it.
-- **Access**: public S3 in the AWS Registry of Open Data — no account, no key, no auth.
-  `s3://overturemaps-us-west-2/release/2026-08-19.0/theme=places/type=place/*`
-- **Scale**: >100M global POIs; a Bay Area bbox is a small slice.
-- **Fields we care about**: `id` (GERS, stable across releases), `names`, `basic_category`
-  (~280 cognitively-basic labels), `taxonomy.hierarchy`, `confidence` (0–1 existence score),
-  `addresses`, `websites`, `socials`, `phones`, `geometry`.
-- **ClickHouse has a documented ingestion path** for this data, which is a nice thing to be
-  able to say at a ClickHouse hackathon.
+> **Corrected from the previous revision.** It argued from 9.1 ("derivative works for the
+> purpose of training… Generative AI Models") on the theory that an embedding is a derivative
+> work. That is overreach: embedding for retrieval is not training, and an embedding model is
+> not a Generative AI Model under the agreement's own definition. The conclusion was right,
+> the reasoning was weak. Lead with 5(a) and 9.3.
+>
+> It also argued the quota made a corpus infeasible. It doesn't — the trial is 5,000 calls
+> over 30 days, so 600 calls is 12% of it. Drop that argument; it is the attackable half of an
+> otherwise unattackable case.
 
-Note `confidence`: Overture scores how likely a place still exists. Filtering `confidence >
-0.7` removes most closed and phantom POIs, which is the single cheapest quality win available.
+**The one carve-out that is real:** 5(a) permits *"storing Yelp business IDs which you may use
+solely for back-end matching purposes"* — indefinitely. An Overture-GERS → Yelp-ID map is
+expressly allowed, and halves the call count if enrichment is ever built.
 
-Note also the schema transition: `categories` is **deprecated and removed in the September
-2026 release** — use `basic_category` and `taxonomy`. Pin the release string
-(`2026-08-19.0`) in code so a mid-project schema change cannot surprise us.
+**Non-commercial analysis rescues nothing.** That carve-out requires Yelp Content be displayed
+*"in the aggregate as an analytical output, and not individually."* Show Up displays individual
+venues. Do not let anyone spend time on this at 3pm.
 
-### 2.2 The ephemeral layer: Yelp, live and unstored
+---
 
-Yelp is genuinely better than Overture at exactly one thing, and it is the thing that decides
-whether an evening works: **what it is like to be in the room.** The `/v3/businesses/search`
-`attributes` parameter exposes, among others:
+## 2. The corpus: Overture Maps
 
-- `noise_level`: `quiet` | `average` | `loud` | `very_loud`
-- `ambience`: `casual`, `classy`, `divey`, `hipster`, `intimate`, `romantic`, `touristy`,
-  `trendy`, `upscale`
-- `liked_by`: `twenties`, `thirties`, `students`, `young_professionals`, `vegetarians`,
-  `vegans`, `dates`, `travelers`, …
-- accessibility: `wheelchair_accessible`, `gender_neutral_restrooms`, `open_to_all`
-- practical: `open_at` (unix ts), `price` (1–4), `outdoor_seating`, `happy_hour`
+- **Licence**: Places is CDLA Permissive 2.0 (Meta, Microsoft, PinMeTo and others), with the
+  Foursquare subset Apache 2.0 and AllThePlaces CC0. Storable, embeddable, commercial-safe.
+- **Access**: `s3://overturemaps-us-west-2/release/2026-08-19.0/theme=places/type=place/*`
+  — public, unauthenticated, in the AWS Registry of Open Data.
+- **Pin the release string.** `categories` is deprecated in favour of `basic_category` +
+  `taxonomy`; it still exists in this release, so pinning is prudence, not urgency.
 
-`noise_level=quiet` is precisely the "quiet enough to actually hear each other" signal we
-hand-wrote into the mock. `wheelchair_accessible` and `open_to_all` are the accessibility
-gaps flagged in `DESIGN.md` §4.14.
+### 2.1 Use `taxonomy.primary`, not `basic_category`
 
-**But it is fetched at display time, held in memory, and never written to ClickHouse or
-Postgres.** Several of these attributes are Premium-plan gated (`outdoor_seating`,
-`happy_hour`, `dogs_allowed` and others), so treat every one of them as optional and design
-for their absence.
+Measured on the SF slice — this matters more than it looks:
 
-### 2.3 What each source may and may not do
-
-This table is the contract. §4 enforces it in the type system.
-
-| | Overture (owned) | Yelp (ephemeral) |
+| field | granularity | example values |
 |---|---|---|
-| Persist to ClickHouse / Postgres | ✅ | ❌ **never** |
-| Embed into a vector | ✅ | ❌ **never** |
-| Commit to the repo | ✅ | ❌ **never** |
-| Hold in memory for a request | ✅ | ✅ |
-| Cache with TTL | ✅ | ✅ **< 24h only** |
-| Show to a user | ✅ | ✅ *with attribution + link* |
-| Feed to an LLM prompt | ✅ | ⚠️ display-copy only, never training |
+| `basic_category` | ~252 labels in SF, mostly non-social | `restaurant`, `health_care`, `attorney_or_law_firm`, `dental_clinic` |
+| `taxonomy.primary` | cuisine / type level | `cocktail_bar`, `wine_bar`, `sushi_restaurant`, `bakery`, `music_venue` |
 
-Yelp's Display Requirements also mandate attribution and that the link back to the Yelp
-listing is not removed. A "via Yelp" line under the venue card discharges this and costs
-nothing.
+`basic_category` collapses all 152 SF cocktail bars, every wine bar and every dive bar into one
+token, `bar`. `taxonomy.primary` separates them. Use it for the embed text and for
+diversification. Both are ~3–4% null, so the text builder needs a fallback.
 
-### 2.4 If Yelp access does not happen today
+**The category vocabulary must be read, not guessed.** Plausible-looking names (`cafe`,
+`climbing_gym`, `cocktail_bar` as *basic* categories) return zero rows. Dump the distinct
+values before writing any filter.
 
-The enrichment layer is optional by construction. With no Yelp key the pipeline still
-returns three real, correctly-located, correctly-categorised venues from Overture — it just
-cannot say how loud they are. Ship the Overture path first and treat Yelp as an upgrade that
-lands or does not.
+### 2.2 `confidence > 0.7` is not the closed-venue guard
+
+The previous revision called it "the single cheapest quality win available." Measured, it
+isn't:
+
+| `operating_status` | rows | survive `confidence > 0.7` |
+|---|---|---|
+| `open` | 41,496 | 37,107 (89%) |
+| `permanently_closed` | 2,097 | **1,036 (49%)** |
+| null | 15,391 | 7,653 (50%) |
+
+Confidence scores *existence*, not *operation*. It leaves 1,036 permanently-closed SF venues in
+the corpus. Sending six strangers to a closed bar is this product's worst possible bug.
+
+```sql
+WHERE confidence > 0.7 AND operating_status = 'open'   -- 37,153 SF places, zero known-closed
+```
+
+One clause. Non-negotiable.
+
+### 2.3 Yelp is out of scope today
+
+Not "optional, build it if there's time" — **out**. The compliance surface in §1, especially
+9.4, exists only if the source is in the build, and enrichment is the largest time sink in the
+plan for the smallest demo gain. If it is ever built: display layer only, post-generation,
+never into a prompt, never persisted except the business ID.
 
 ---
 
 ## 3. The matching algorithm
 
-### 3.1 The trap: do not retrieve by group centroid
+### 3.1 Score per member, then aggregate — and justify it honestly
 
-The obvious approach — average the six members' embeddings, find the nearest venue — is the
-"Average" strategy from the group-recommender-systems literature, and it fails here in two
-compounding ways.
-
-**Failure one: averaging is the wrong aggregator for diverse groups.** The literature is
-explicit that the average strategy performs well only when preferences are similar, and
-degrades when they are diverse. Our groups are *deliberately* diverse — `run-matching`
-spreads members across energy levels on purpose. We engineered the exact condition under
-which averaging is documented to fail.
-
-**Failure two: high-dimensional centroids are hubs.** Vectors near the centroid of a
-distribution tend to be the nearest neighbour of a very large fraction of all other vectors —
-"centrality-driven hubness". A group centroid is close to the global centroid, so the venue
-nearest to it is the venue nearest to *everything*: the most generic bar in the city.
-
-Together these produce a specific, recognisable demo failure: **every group gets the same
-three venues, and they are all boring.** It will look like a caching bug. It is not.
-
-### 3.2 The fix: aggregate over scores, not over vectors
-
-Score each candidate venue against each member individually, then aggregate the **scores**.
-This keeps every member's actual position in the space instead of collapsing six people into
-a point that represents none of them.
+Do not retrieve by the centroid of member embeddings. Score each venue against each member and
+aggregate the **scores**:
 
 ```
-for each candidate venue v:
-    s_i = 1 - cosineDistance(member_i.embedding, v.embedding)   for i in 1..n
-
-    avg          = mean(s)                      # group fit
-    least_misery = min(s)                       # nobody is dragged along
-    score(v)     = 0.5 * avg + 0.5 * least_misery
+s_i    = 1 - cosineDistance(member_i, venue)
+score  = 0.5 * mean(s) + 0.5 * min(s)
 ```
 
-This is **average-without-misery**, the consensus strategy from the group recsys literature,
-and it is the right one for this product specifically. Show Up's promise is that you can turn
-up alone and not have a bad night. A venue that delights four people and bores two is a worse
-outcome, by our own product thesis, than one that suits all six reasonably well. The
-`least_misery` term encodes that promise numerically.
+**The honest justification is the product, not the geometry.** Show Up promises you can turn up
+alone and not have a bad night. A venue that delights four people and bores two is worse, by
+our own thesis, than one that suits all six. The `min` term is that promise as arithmetic.
 
-Implementable in one ClickHouse query — pass the member vectors as an `Array(Array(Float32))`
-and use `arrayMap` + `arrayReduce`:
+Verified: a venue scoring 1.0 / 0.0 across two members ranks **below** one scoring 0.707 /
+0.707 — 0.25 against 0.707. It does what it claims.
+
+> **Two claims removed. Do not put either on stage.**
+>
+> *"High-dimensional centroids are hubs."* Misapplied. Hubness is a property of the database
+> points, independent of how you query; querying by centroid does not create it and per-member
+> scoring does not remove it. The concept being reached for was centroid *concentration* — and
+> that is largely defused here anyway, because the vectors are mean-centred and cosine is
+> scale-invariant, so a shorter centroid ranks identically. "Hubness" is exactly the word a
+> judge who knows retrieval will pull on.
+>
+> *"Averaging fails for diverse groups."* The cited diversity is `run-matching` spreading
+> members across energy levels — but `energy` is a categorical column, not a dimension of the
+> embedding, and members are selected as the seed's nearest neighbours *in that embedding*. In
+> the space where averaging happens, groups are deliberately homogeneous: the documented
+> condition under which Average performs **well**.
+
+**Name it correctly.** `0.5·avg + 0.5·min` is a blend of the Average and Least Misery
+strategies. It is **not** "average without misery" — in the literature that means averaging
+while *excluding* items where any member falls below a misery threshold. If you prefer the real
+thing, it is cleaner and fits the hard-filter discipline better:
 
 ```sql
-SELECT
-    venue_id, name,
-    arrayMap(m -> 1 - cosineDistance(embedding, m), {members:Array(Array(Float32))}) AS s,
-    0.5 * arrayAvg(s) + 0.5 * arrayMin(s) AS score
+WHERE arrayMin(s) >= {floor:Float64} ORDER BY arrayAvg(s) DESC
+```
+
+A hard misery floor states "nobody has a bad night" better than a weight that lets a high
+average buy out one miserable member.
+
+### 3.2 The query
+
+```sql
+SELECT venue_id, name, taxonomy_primary,
+       arrayMap(m -> 1 - cosineDistance(embedding, m), {members:Array(Array(Float32))}) AS s,
+       0.5 * arrayAvg(s) + 0.5 * arrayMin(s) AS score
 FROM venue_vectors
-WHERE city = {city:String}
-  AND greatCircleDistance(lng, lat, {clng:Float64}, {clat:Float64}) < {radius_m:Float64}
-  AND confidence > 0.7
+WHERE greatCircleDistance(lng, lat, {clng:Float64}, {clat:Float64}) < {radius_m:Float64}
+  AND is_social
 ORDER BY score DESC
 LIMIT 50
 FORMAT JSON
 ```
 
-One scan, no centroid, every member represented. `greatCircleDistance` is built into
-ClickHouse — no PostGIS, no extension.
+One scan, six member vectors, no centroid, no index. `FORMAT JSON` carries the `statistics`
+block — put `elapsed` and `rows_read` on screen.
 
-### 3.3 The geo anchor is a min-max problem, not a centroid
+**`arr()` in `_shared/clickhouse.ts` only flattens one level.** Passing `Array(Array(Float32))`
+needs an `arr2()` helper. Two lines, and it is the first thing that will fail.
 
-The same reasoning applies to location, where it is even more obvious. The geographic
-centroid of six people's homes can easily be a spot none of them can reach. Anchor instead on
-**minimising the worst individual travel distance** — pick the point (or filter the radius)
-that keeps the furthest member's journey acceptable. Least misery again, in metres.
+### 3.3 The geo anchor is a fixed city centre
 
-For the hackathon: anchor on the members' centroid but hard-filter on
-`max_i(distance(member_i, venue)) < 8km`, which is the cheap version of the same idea.
+The previous revision anchored on "the centroid of members' locations" and proposed minimising
+the worst individual travel. **Neither is implementable: members have no coordinates.**
+`profiles` has `city text` and nothing else; the only lat/lng in the schema lives inside
+`groups.venue`, written *after* matching.
 
-### 3.4 Full retrieval pipeline
+For today `{clng}/{clat}` are a constant — SF city centre — with a radius. Min-max travel is
+post-hackathon and depends on adding location to signup, which is **not** a today change.
 
-```
-  1. GEO PREFILTER      bbox / greatCircleDistance          ~50k → ~2k
-  2. HARD FILTERS       confidence, category allowlist,     ~2k  → ~500
-                        open at event time (Yelp, if avail)
-  3. VECTOR SCORE       avg-without-misery, per member      ~500 → 50
-  4. FUSION             RRF over {vector, popularity,       50 ranked
-                        category-match} rankings
-  5. RERANK             Voyage rerank-2.5 on a synthesised  50 → 10
-                        group description
-  6. DIVERSIFY          MMR-style: different basic_category  10 → 3
-                        and different *mode* (sit vs do)
-  7. PITCH              one Claude call: one line per venue  3 + copy
-                        written for this group
-  8. ENRICH             Yelp live: hours, noise, access      display only
-```
-
-**On step 4 (fusion).** Reciprocal Rank Fusion combines rankings that have incomparable score
-scales — cosine similarity, review counts, category-match booleans — by operating on *ranks*
-rather than scores:
+### 3.4 Pipeline, after cuts
 
 ```
-RRF(v) = Σ_r  1 / (k + rank_r(v))          k = 60
+  1. GEO + STATUS FILTER   radius, operating_status, is_social     37k → ~2k
+  2. VECTOR SCORE          avg / least-misery blend, per member    ~2k → 50
+  3. DIVERSIFY             distinct taxonomy_primary                50 → 3
+  4. PITCH                 one Claude call, returned ids validated  3 + copy
 ```
 
-`k = 60` is the standard value; the optimum is famously flat across roughly [20, 100], so it
-is not a knob worth tuning today. RRF is the default hybrid ranking method in OpenSearch,
-Elasticsearch, Azure AI Search and Weaviate, so it is also a defensible thing to name on
-stage.
+**RRF is cut.** It was specified over `{vector, popularity, category-match}`, but Overture has
+no popularity signal of any kind — the source that provided `rating` and `review_count` left
+with Yelp, and the fusion step that consumed them stayed behind. Category-match is a boolean,
+so as a ranking it is one large tie. If fusion is ever wanted, `confidence` is the honest
+substitute for popularity.
 
-**On step 5 (rerank).** A bi-encoder embedding comparison is fast but coarse. A cross-encoder
-reranker reads the query and the candidate together and is substantially more accurate.
-`rerank-2.5` shares the same 200M free-token allowance as the embedding models, so at our
-volume it costs nothing. The "query" is a short synthesised group description — *"six people
-into climbing, records and baking; Friday evening; prefer to talk over doing"* — which is a
-much richer signal than any single vector.
+**Reranking is cut.** A cross-encoder earns its keep by *reading* the candidate. The venue
+document is a name, a category and a neighbourhood. There is nothing there the bi-encoder did
+not already get, and you cannot rerank your way out of a thin corpus.
 
-**On step 6 (diversify).** Returning the top 3 by score gives three cocktail bars, and the
-vote becomes meaningless because the options are the same. Enforce that the three differ on
-`basic_category`, and bias the third toward a different *mode*: if the first two are
-sit-and-talk, make the third do-a-thing. That turns the vote into the real question — *do we
-want to sit and talk, or do something?* — which is the axis groups actually disagree on and
-the reason the PRD has a vote at all.
+**Diversification is the step that makes the vote real.** Three cocktail bars is not a
+decision. Enforce distinct `taxonomy_primary`, and bias the third toward a different *mode* —
+if the first two are sit-and-talk, make the third do-a-thing. That turns the vote into the
+question groups actually disagree on.
 
-### 3.5 What text to embed
-
-Venue name alone is nearly signal-free — "Kinship" tells you nothing. Build a document:
+### 3.5 Embedding: same model and dimension, **different centroid**
 
 ```
 Kinship
 Category: cocktail bar
-Also: tapas, wine bar
 Neighborhood: Mission District, San Francisco
 ```
 
-Thin, but honest and legally clean. Category taxonomy plus name plus neighbourhood is enough
-for topical matching; it is not enough for vibe matching, which is what the Yelp attribute
-layer supplies as *filters* rather than as embedded text.
+- **Same model, same 256 dims** as profiles. Non-negotiable.
+- **Centre venues by the venue-corpus mean — not `embedding_mean`.**
 
-**Same model, same dimension, same centroid as profiles.** 256-dim `voyage-4`,
-`input_type: null`, and the population mean from `embedding_mean` subtracted. Venues and
-people must live in the same centered space or the distances between them are meaningless.
-This is the single most likely thing to get silently wrong.
+> **This is the correction that matters most, and the previous revision had it backwards.** It
+> said venues must share the profile centroid or "the distances between them are meaningless."
+> That assertion *causes* the failure it warns about.
+>
+> `embedding_mean` is the centroid of ~200 archetype bios — people describing hobbies. Venue
+> text is a different domain with its own mean `m_v`. Subtracting the profile centroid `c`
+> leaves every venue carrying a shared offset `(m_v − c)`, so for any query the numerator gains
+> a term identical across all venues, and ranking is driven substantially by `‖v̂‖` — which is
+> minimised by the venue nearest the *profile* centroid. **The same venue, for every group,
+> silently.** Per-member scoring does not help: the offset is shared by every member equally.
+>
+> Fix: compute a venue-corpus mean at ingest, store it as a second row in `embedding_mean`
+> (`id = 2`), and have the venue path read that one. ~5 lines.
 
----
-
-## 4. Code isolation
-
-The user asked how to isolate this properly. The answer is unusually clean here, because
-**the licence boundary and the module boundary are the same line.**
-
-### 4.1 The organising principle
-
-Two record types that never mix, enforced by the type system rather than by a comment:
-
-```ts
-/** Apache 2.0 / CDLA. May be persisted, embedded, committed. */
-type OwnedVenue = {
-  readonly _brand: 'owned'
-  venueId: string          // Overture GERS id
-  name: string
-  basicCategory: string
-  taxonomy: string[]
-  lat: number; lng: number
-  confidence: number
-  website?: string
-}
-
-/** Yelp. In-memory only, <24h, display-only. Has no persistence path by construction. */
-type EphemeralEnrichment = {
-  readonly _brand: 'ephemeral'
-  readonly expiresAt: number      // now + 24h, enforced on read
-  yelpUrl: string                 // attribution link, must be rendered
-  rating?: number
-  price?: 1|2|3|4
-  noiseLevel?: 'quiet'|'average'|'loud'|'very_loud'
-  ambience?: string[]
-  wheelchairAccessible?: boolean
-  isOpenAt?: boolean
-}
-```
-
-Every persistence function accepts `OwnedVenue` and nothing else. There is no overload, no
-union, and no `any` on that path. `EphemeralEnrichment` is structurally incapable of reaching
-ClickHouse because no writer takes its shape. A compliance rule that lives in a comment gets
-violated at 4pm by someone under time pressure; one that fails to compile does not.
-
-### 4.2 Directory layout
-
-```
-supabase/functions/
-├── _shared/
-│   ├── clickhouse.ts              (exists)
-│   ├── voyage.ts                  (exists — add rerank())
-│   ├── claude.ts                  (exists — planGroup shrinks, see 4.4)
-│   └── venues/                    ← the new bounded context
-│       ├── types.ts               OwnedVenue, EphemeralEnrichment, VenueCandidate
-│       ├── ports.ts               VenueCorpus, VenueEnricher  (interfaces only)
-│       ├── retrieve.ts            the 8-step pipeline, source-agnostic
-│       ├── aggregate.ts           avg-without-misery, RRF, MMR diversification
-│       └── adapters/
-│           ├── clickhouse_corpus.ts   VenueCorpus  → venue_vectors
-│           ├── yelp_enricher.ts       VenueEnricher → live Yelp, TTL, no writes
-│           ├── null_enricher.ts       VenueEnricher → returns {} (no Yelp key)
-│           └── fixture_corpus.ts      VenueCorpus  → 20 hand-curated SF venues
-└── pick-venues/
-    └── index.ts                   thin: auth, load group, call retrieve, write options
-
-clickhouse/
-├── 003_venues.sql                 venue_vectors DDL
-└── queries/venue_match.sql        the avg-without-misery scan
-
-scripts/
-├── ingest_overture.py             S3/DuckDB → bbox → venues.parquet  (run once)
-└── embed_venues.py                venues.parquet → Voyage → venue_vectors
-```
-
-### 4.3 The ports
-
-Two interfaces, three adapters, and the pipeline depends only on the interfaces:
-
-```ts
-export interface VenueCorpus {
-  /** Owned data only. Implementations MUST NOT return licence-restricted content. */
-  nearest(args: {
-    memberEmbeddings: number[][]
-    lat: number; lng: number; radiusM: number
-    limit: number
-  }): Promise<VenueCandidate[]>
-}
-
-export interface VenueEnricher {
-  /** Display-only. Never persisted. Returns {} when unavailable — never throws. */
-  enrich(venues: OwnedVenue[], at: Date): Promise<Map<string, EphemeralEnrichment>>
-}
-```
-
-Three properties fall out of this that matter today:
-
-1. **`fixture_corpus.ts` unblocks the UI immediately.** Twenty hand-written SF venues, no S3,
-   no embedding, no ClickHouse. Whoever is building the vote card can work against it this
-   minute while the Overture ingest is still running.
-2. **`null_enricher.ts` makes Yelp genuinely optional.** No key, no plan, no problem — the
-   flow degrades to "no noise-level shown" rather than breaking.
-3. **The pipeline is testable without any network.** `retrieve.ts` takes both ports as
-   arguments; a test wires two fakes and asserts on the ranking.
-
-### 4.4 What shrinks elsewhere
-
-`planGroup` in `_shared/claude.ts` currently asks Claude to name a venue from memory. That
-must go — a language model can invent a bar that does not exist, and sending six people to a
-nonexistent address is the worst bug this product can have. Its job narrows to: given three
-**real, retrieved** venues, write one line each aimed at this group.
-
-Validate the returned ids against the ids that were sent in and drop anything that does not
-match, exactly as `run-matching` now validates `plan.questions`. Grounding plus id validation
-means hallucination is structurally impossible rather than merely unlikely.
+Also consider `input_type`. Person↔person is symmetric, which is why `voyage.ts` correctly uses
+`null`. Person↔venue is the asymmetric query/document case that parameter exists for. Nothing
+errors either way, so this is a quality question rather than a correctness one — but it is free
+to get right.
 
 ---
 
-## 5. Build stages
+## 4. Code structure
 
-Each stage ends with something checkable. Do not start a stage before the previous one's
-check passes.
+**Two files of new server code. No bounded context, no ports, no adapters.**
 
-| # | Stage | Verify by |
+```
+clickhouse/003_venues.sql                  venue_vectors DDL
+scripts/ingest_venues.py                   Overture → bbox → embed → insert  (one script)
+supabase/functions/_shared/venues.ts       types, query, ranking       (~80 lines)
+supabase/functions/pick-venues/index.ts    auth, load group, retrieve, pitch  (~120 lines)
+```
+
+> **The previous revision proposed an eight-file `_shared/venues/` package with two ports and
+> four adapters. That was ceremony.** One real implementation behind an interface is a synonym,
+> not an abstraction. Two of the four adapters served the enrichment layer, now cut.
+> `fixture_corpus.ts` would have duplicated `app/lib/data/mock_repository.dart`, which already
+> works and already renders through `venue_vote_card.dart`. And it is stylistically foreign:
+> the whole ClickHouse client is one 103-line file, the whole LLM layer is 91 lines, and
+> `run-matching` inlines everything with no ports anywhere.
+
+### The branded-type idea does not work here
+
+The previous revision claimed the licence boundary could be enforced by the type system —
+`OwnedVenue` versus `EphemeralEnrichment`, with no persistence function accepting the latter.
+Nice idea; it fails three ways:
+
+1. **Nothing type-checks this repo.** No CI, no `deno check` anywhere, and function deploys
+   bundle rather than verify. "Fails to compile" is false when nothing compiles it.
+2. **It guards the wrong door.** The persistence primitive is `ch(sql: string, params)` — it
+   takes a string. ``ch(`INSERT … '${yelp.name}'`)`` type-checks perfectly.
+3. **It cannot see the real leak.** Yelp attribute → Claude prompt → `pitch` string →
+   persisted. A pitch is a `string`; no type notices, and clause 9.4 is breached at the prompt,
+   before persistence is even reached.
+
+The compliance problem disappears when the non-compliant source is not in the build. Keep §1 as
+the *reason* Overture is the corpus — it is a genuinely good answer to a judge — and put it in
+the writeup, not the type system.
+
+---
+
+## 5. Build order
+
+Prerequisites first, because each can consume the whole afternoon:
+
+- [ ] **`.env.functions` keys are empty.** `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY` and
+      `CLICKHOUSE_PASSWORD` have no values. Nothing below works until they do.
+- [ ] `SELECT count() FROM profile_vectors` and `SELECT length(mean) FROM embedding_mean` — if
+      ClickHouse is empty, that is the afternoon and venues are irrelevant.
+- [ ] **Settle with the other agent: does the demo run on `MockRepository` or Supabase?**
+      Everything branches on this. If Mock, never touch `repository.dart` or `migrations/` and
+      the collision risk goes to zero.
+
+| # | Time | Work |
 |---|---|---|
-| 0 | `fixture_corpus.ts` + `types.ts` + `ports.ts` | Vote card renders 3 venues in the app |
-| 1 | `003_venues.sql`; `ingest_overture.py` for the SF bbox | `SELECT count() FROM venues` > 5000 |
-| 2 | `embed_venues.py` — same model/dims/centroid as profiles | `length(any(embedding)) = 256`; a known bar's top-10 neighbours are plausible |
-| 3 | `aggregate.ts` — avg-without-misery + RRF + MMR | Unit test: two disjoint members do **not** both get their top pick |
-| 4 | `retrieve.ts` wired to `clickhouse_corpus` | Two different groups get **different** venue sets ← the anti-hubness check |
-| 5 | `pick-venues` edge function writes `venue_options` | Rows appear; chat shows the vote |
-| 6 | `yelp_enricher.ts` (optional) | Noise level and hours render, with "via Yelp" attribution |
-| 7 | Rerank step | Compare top-3 before/after on one group; keep if better |
+| 1 | 15 min | `ingest_venues.py`: Overture → SF bbox → `operating_status='open'` → `taxonomy.primary`. Needs `duckdb` with **`httpfs` and `spatial`** — `ST_X`/`ST_Y` fail without spatial. |
+| 2 | 20 min | `003_venues.sql`; embed; store the **venue** centroid as `embedding_mean id=2`. |
+| 3 | **gate** | **Take one obviously climbing-shaped profile and confirm a bouldering gym outranks a nail salon.** If it doesn't, it is §3.5. |
+| 4 | 30 min | `pick-venues`: query, diversify, Claude pitch, validate returned ids against the ids sent. |
+| 5 | 20 min | Get the output into the app by the cheapest honest route given the Mock/Supabase answer. |
+| 6 | rest | Stop building. Rehearse. Write the ClickHouse story down. |
 
-Stage 4's check is the important one and the easiest to skip. **Run the matcher for two
-deliberately different groups and confirm the venue lists differ.** If they do not, something
-has collapsed to a centroid and the whole feature is decorative.
-
-Stages 0–2 are the critical path. Stages 6 and 7 are strictly upside and should be cut
-without hesitation if the core flow is not solid.
+**Stage 3 is the real gate, not "do two groups get different venues".** That check passes
+whether or not the centroid bug is fixed, because the lists differ marginally regardless. A
+semantic check — does a climber get a climbing gym — is the one that exposes §3.5.
 
 ---
 
-## 6. Failure modes, in the order they will bite
+## 6. Failure modes
 
-1. **Different embedding space for venues and people.** Different model, dimension, or a
-   missing centroid subtraction. Distances become meaningless but nothing errors. *Guard:*
-   assert `length(embedding) = 256` on insert, and check one known-good pair by hand.
-2. **Every group gets identical venues.** Centroid retrieval and hubness (§3.1). *Guard:*
-   stage-4 check above.
-3. **Three variations of the same place.** No diversification — the vote becomes theatre.
-   *Guard:* assert three distinct `basic_category` values.
-4. **A recommended venue is closed or does not exist.** *Guard:* Overture `confidence > 0.7`,
-   plus Yelp `open_at` when the enricher is available.
-5. **Yelp quota exhausted mid-demo.** 300 calls/day on trial, and the rehearsal loop burns
-   them fast. *Guard:* `null_enricher` fallback, and a short in-memory TTL cache so
-   re-running the same group does not re-fetch.
-6. **Overture schema drift.** `categories` is removed in the September 2026 release.
-   *Guard:* pin `2026-08-19.0` in the ingest script; read `basic_category`, not `categories`.
-7. **Someone caches Yelp to "make the demo reliable."** The one failure with legal rather
-   than technical consequences. *Guard:* §4.1 — no function that writes accepts that type.
+1. **Every group gets the same bland venue.** Venues centred with the profile centroid (§3.5).
+   Silent, no error. *Gate:* stage 3.
+2. **A recommended venue is closed.** `confidence` alone leaves 1,036 closed SF venues.
+   *Gate:* `operating_status = 'open'`.
+3. **Nothing renders in the app.** The pipeline returns perfect venues to `curl` while the demo
+   phone runs `MockRepository` and `SupabaseRepository.currentGroup()` still throws
+   `UnimplementedError`. *Gate:* the Mock/Supabase decision, made first, not at 4pm.
+4. **Three variations of the same place.** No diversification — the vote is theatre.
+   *Gate:* assert distinct `taxonomy_primary`.
+5. **`arr()` cannot express a nested array.** First thing that fails. *Gate:* write `arr2()` up front.
+6. **A category filter matching nothing.** The vocabulary was guessed rather than read (§2.1).
+7. **Promoting `0002_product_model.sql.draft` to get `venue_options`.** It also renames
+   `groups.cohesion` → `seed_distance`, which **breaks `run-matching`** mid-sweep, on another
+   agent's critical path. If the tables are needed, write a new migration containing only
+   `venue_options`, `venue_votes`, `messages.kind`, `venue_tally()` and their policies.
 
 ---
 
 ## 7. Cost
 
-| Component | Cost today | Note |
-|---|---|---|
-| Overture Maps | **$0** | Public S3, open data registry, no account |
-| Voyage embeddings | **$0** | 200M free tokens; a Bay Area slice is a rounding error |
-| Voyage rerank-2.5 | **$0** | Same 200M free-token allowance |
-| Claude (pitch copy) | cents | One call per group |
-| ClickHouse Cloud | $0 | Trial tier |
-| Yelp | $0 trial / $7.99 per 1k | Optional layer only |
-
-The whole pipeline runs at zero marginal cost, and the one paid component is the one that is
-optional by construction.
+Overture $0 · Voyage embeddings $0 (200M free tokens) · Claude cents per group · ClickHouse
+trial $0. Yelp not used.
 
 ---
 
-Sources:
-- [Yelp API Terms of Use](https://terms.yelp.com/developers/api_terms/20250113_en_us/)
-- [Yelp — business search reference](https://docs.developer.yelp.com/reference/v3_business_search)
-- [Yelp — events search reference](https://docs.developer.yelp.com/reference/v3_events_search)
-- [Yelp — rate limiting](https://docs.developer.yelp.com/docs/places-rate-limiting)
-- [Yelp — plans](https://docs.developer.yelp.com/docs/plans)
-- [Overture Maps — places guide](https://docs.overturemaps.org/guides/places/)
-- [Overture Maps — attribution and licensing](https://docs.overturemaps.org/attribution/)
-- [Foursquare Open Source Places (Apache 2.0)](https://opensource.foursquare.com/os-places/)
-- [ClickHouse — Foursquare places dataset](https://clickhouse.com/docs/getting-started/example-datasets/foursquare-places)
-- [ClickHouse — exact and approximate vector search](https://clickhouse.com/docs/engines/table-engines/mergetree-family/annindexes)
-- [Group recommender systems: aggregation, satisfaction and group attributes](https://link.springer.com/chapter/10.1007/978-1-4899-7637-6_22)
-- [Algorithms for group recommendation (TU Graz)](https://ase.sai.tugraz.at/wp-content/uploads/sites/34/2014/01/grouprecommendersystemschapter2.pdf)
-- [Reciprocal Rank Fusion explained](https://blog.serghei.pl/posts/reciprocal-rank-fusion-explained/)
-- [Voyage AI — rerank-2.5](https://openrouter.ai/voyageai/rerank-2.5)
-- [Voyage AI — pricing and free tokens](https://docs.voyageai.com/docs/pricing)
+Sources: [Yelp API Terms](https://terms.yelp.com/developers/api_terms/20250113_en_us/) ·
+[Overture places guide](https://docs.overturemaps.org/guides/places/) ·
+[Overture licensing](https://docs.overturemaps.org/attribution/) ·
+[ClickHouse vector search](https://clickhouse.com/docs/engines/table-engines/mergetree-family/annindexes) ·
+[Voyage pricing](https://docs.voyageai.com/docs/pricing) ·
+[Group recommender aggregation strategies](https://link.springer.com/chapter/10.1007/978-1-4899-7637-6_22)

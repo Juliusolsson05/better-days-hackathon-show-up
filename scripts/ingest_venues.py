@@ -18,6 +18,7 @@ See docs/VENUE_PIPELINE.md section 1.
 import json
 import os
 import sys
+import time
 
 import duckdb
 import requests
@@ -150,25 +151,40 @@ def document(v: dict) -> str:
     return f"{v['name']}\nCategory: {kind}"
 
 
-def embed(texts):
-    """input_type is null, matching the profile path in _shared/voyage.ts."""
+def embed(texts, batch=128):
+    """input_type is null, matching the profile path in _shared/voyage.ts.
+
+    Retries on 429. A corpus this size is ~66 requests back to back, which is comfortably
+    over the free tier's per-minute allowance, so the first run without backoff dies a few
+    hundred venues in. Voyage sends Retry-After on a rate limit; honour it when present and
+    fall back to exponential backoff when it is not.
+    """
     out = []
-    for i in range(0, len(texts), 128):
-        res = requests.post(
-            "https://api.voyageai.com/v1/embeddings",
-            headers={"Authorization": f"Bearer {VOYAGE_KEY}"},
-            json={
-                "input": texts[i:i + 128],
-                "model": "voyage-4",
-                "input_type": None,
-                "output_dimension": DIMS,
-            },
-            timeout=180,
-        )
-        res.raise_for_status()
-        out.extend(d["embedding"] for d in res.json()["data"])
-        if (i // 128) % 10 == 0:
-            print(f"  embedded {len(out)}/{len(texts)}", file=sys.stderr)
+    for i in range(0, len(texts), batch):
+        chunk = texts[i:i + batch]
+        for attempt in range(8):
+            res = requests.post(
+                "https://api.voyageai.com/v1/embeddings",
+                headers={"Authorization": f"Bearer {VOYAGE_KEY}"},
+                json={
+                    "input": chunk,
+                    "model": "voyage-4",
+                    "input_type": None,
+                    "output_dimension": DIMS,
+                },
+                timeout=180,
+            )
+            if res.status_code == 429:
+                wait = float(res.headers.get("Retry-After", min(60, 2 ** attempt)))
+                print(f"  rate limited, sleeping {wait:.0f}s", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            res.raise_for_status()
+            out.extend(d["embedding"] for d in res.json()["data"])
+            break
+        else:
+            raise SystemExit(f"voyage kept rate limiting at item {i}")
+        print(f"  embedded {len(out)}/{len(texts)}", file=sys.stderr)
     return out
 
 

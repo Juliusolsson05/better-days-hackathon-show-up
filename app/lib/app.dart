@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/notifications.dart';
 import 'core/theme.dart';
 import 'data/mock_repository.dart';
 import 'data/repository.dart';
@@ -55,10 +58,17 @@ class _ShowUpAppState extends State<ShowUpApp> {
         : Phase.onboarding;
   }
 
+  StreamSubscription<NotificationTap>? _tapSub;
+
   @override
   void initState() {
     super.initState();
     _repo.signIn();
+    // Notification responses outlive individual screens. Subscribe before restoration so a
+    // cold-start tap can be replayed once AppState has loaded the durable group.
+    _tapSub = NotificationService.instance.taps.listen(
+      _state.handleNotificationTap,
+    );
     if (_useSupabase) _restore();
   }
 
@@ -78,6 +88,7 @@ class _ShowUpAppState extends State<ShowUpApp> {
 
   @override
   void dispose() {
+    _tapSub?.cancel();
     final repo = _repo;
     if (repo is MockRepository) repo.dispose();
     super.dispose();
@@ -150,8 +161,10 @@ class _ShowUpAppState extends State<ShowUpApp> {
                 // The named define keeps rehearsals possible without quietly turning the
                 // debug affordance into part of the release product.
                 if (kDebugMode ||
-                    const bool.fromEnvironment('SHOW_DEMO_CONTROLS'))
+                    const bool.fromEnvironment('SHOW_DEMO_CONTROLS')) ...[
                   _DevJump(_state),
+                  _DevLadder(_state),
+                ],
               ],
             ),
           );
@@ -230,6 +243,63 @@ class _DevJump extends StatelessWidget {
               child: Text('Preview no-show message'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fires the whole ladder compressed into ~40 seconds.
+///
+/// Demo infrastructure like [_DevJump]: the real ladder's first rung is three days before
+/// the event, so there is no way to show the notification system -- the part of this
+/// product that carries the story -- without compressing it. Gate on kDebugMode before
+/// this ships.
+class _DevLadder extends StatelessWidget {
+  final AppState state;
+  const _DevLadder(this.state);
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 8,
+      bottom: 140,
+      child: SafeArea(
+        child: IconButton(
+          tooltip: 'Fire the ladder (compressed)',
+          icon: const CircleAvatar(
+            radius: 18,
+            backgroundColor: Colors.white12,
+            child: Icon(
+              Icons.notifications_active_outlined,
+              size: 18,
+              color: Colors.white54,
+            ),
+          ),
+          onPressed: () async {
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            if (state.group == null) {
+              messenger?.showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Enter a group first — the ladder schedules from it.',
+                  ),
+                ),
+              );
+              return;
+            }
+            await state.armLadder(demo: true);
+            final pending = await NotificationService.instance.pending();
+            messenger?.showSnackBar(
+              SnackBar(
+                content: Text(
+                  state.notificationsEnabled == true
+                      ? '${pending.length} rungs armed — background the app to see them'
+                      : 'Notifications denied — enable them in Settings',
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

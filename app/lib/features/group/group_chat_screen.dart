@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../state/app_state.dart';
 import 'group_info_screen.dart';
+import 'no_show_sheet.dart';
 import 'question_sheet.dart';
 import 'venue_vote_card.dart';
 
@@ -20,6 +22,33 @@ class GroupChatScreen extends StatefulWidget {
 class _GroupChatScreenState extends State<GroupChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // The flaking acknowledgement is a "come back later" surface: it can only be known
+    // once the rest of the group has voted, which is after the meetup, so entering the
+    // chat is where we check for it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
+  }
+
+  Future<void> _maybeAckNoShow() async {
+    final gid = widget.state.group!.id;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'noshow_ack_$gid';
+    if (prefs.getBool(key) ?? false) return;
+    if (!await widget.state.repo.wasMarkedNoShow(gid)) return;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: surface,
+      isScrollControlled: true,
+      builder: (_) => const NoShowSheet(),
+    );
+    // Shown once per group -- an absence acknowledged every launch would be its own
+    // small punishment, which is the opposite of the point.
+    await prefs.setBool(key, true);
+  }
 
   void _send() {
     final text = _input.text.trim();

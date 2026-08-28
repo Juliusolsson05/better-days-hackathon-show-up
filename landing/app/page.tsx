@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 
 import { StoreBadges } from '@/components/StoreBadges';
@@ -13,11 +14,12 @@ import { site } from '@/lib/site';
  * matcher -- is genuinely interesting and lives entirely in /deck. Here it would answer a
  * question this visitor has not asked.
  *
- * There is no hero illustration, on purpose. The first pass had a diagram of a table with
- * six labelled seats and it was decoration pretending to be information: it restated the
- * headline in a less clear form and delayed the one action the page wants. The hero is now
- * the sentence and the input, and the page's memorable object is the question card further
- * down -- which is real product output rather than a picture of a concept.
+ * The hero used to be copy-only. The first illustration we tried was a labelled diagram of
+ * a table, and it failed because it restated the headline instead of proving it. The phone
+ * mockup is different: it is a real product surface (group, chat, venue, members), so it
+ * answers "what am I signing up for?" without competing with the waitlist form. Copy stays
+ * first in the DOM so the CTA is still the first thing a keyboard or a narrow screen meets;
+ * the image sits on the right on wide screens, where a second column is free.
  */
 
 /** A real sequence, which is the only reason it is numbered. */
@@ -80,34 +82,57 @@ export default function Home() {
 
       {/* ---- Hero ------------------------------------------------------------------ */}
       <section className="band band-sage py-16 sm:py-24">
-        <div className="max-w-5xl">
-        <p className="eyebrow rise inline-flex rounded-full bg-primary-pale px-4 py-2 text-ink-deep" style={{ animationDelay: '0.05s' }}>
-          Small groups · real places · no swiping
-        </p>
-        <h1
-          className="display rise mt-8 max-w-4xl text-5xl sm:text-6xl lg:text-7xl"
-          style={{ animationDelay: '0.15s' }}
-        >
-          A safe place to meet <span className="text-ink-deep">like-minded people.</span>
-        </h1>
-        <p
-          className="rise mt-10 max-w-2xl text-xl leading-8 text-body"
-          style={{ animationDelay: '0.28s' }}
-        >
-          Automatically paired with a small group of brand-new faces who are into the same
-          things you are. Everyone comes alone.
-        </p>
+        {/* Copy first, image second: the waitlist is still the action, and a stacked
+            mobile layout would otherwise bury the form under a tall phone. The 7/5 split
+            keeps the headline readable; an even split made the type wrap into a stack of
+            short lines that no longer sounded like a sentence. */}
+        <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-8">
+          <div className="lg:col-span-7">
+            <h1
+              className="display rise max-w-4xl text-5xl sm:text-6xl lg:text-6xl xl:text-7xl"
+              style={{ animationDelay: '0.15s' }}
+            >
+              We'll help you figure where to go and what to do.{' '}
+              <span className="text-ink-deep">Just ShowUp!</span>
+            </h1>
+            <p
+              className="rise mt-10 max-w-2xl text-xl leading-8 text-body"
+              style={{ animationDelay: '0.28s' }}
+            >
+              4-6 people, one table, one evening. Everyone came alone, and everyone leaves the
+              room making new connections.
+            </p>
 
-        {/* The form is the hero's call to action rather than a button that scrolls to one.
-            Every screen between someone and the single thing you want them to do loses a
-            share of them, and that includes a scroll. */}
-        <div className="rise mt-10" style={{ animationDelay: '0.4s' }}>
-          <WaitlistForm />
-        </div>
+            {/* The form is the hero's call to action rather than a button that scrolls to one.
+                Every screen between someone and the single thing you want them to do loses a
+                share of them, and that includes a scroll. */}
+            <div className="rise mt-10" style={{ animationDelay: '0.4s' }}>
+              <WaitlistForm />
+            </div>
 
-        <div className="rise mt-10" style={{ animationDelay: '0.5s' }}>
-          <StoreBadges />
-        </div>
+            <div className="rise mt-10" style={{ animationDelay: '0.5s' }}>
+              <StoreBadges />
+            </div>
+          </div>
+
+          <div
+            className="rise mx-auto w-full max-w-xs sm:max-w-sm lg:col-span-5 lg:max-w-none"
+            style={{ animationDelay: '0.35s' }}
+          >
+            {/* Intrinsic size matches the PNG (1412×2006). CSS shrinks it; Next still
+                needs the real ratio so the slot does not collapse before the file loads.
+                The asset is already transparent -- a black studio backdrop was knocked
+                out -- so it sits on the sage band without a rectangle around the hand. */}
+            <Image
+              src="/hero-mockup.png"
+              alt="Show Up on a phone: a Board games group with chat, a venue, and members."
+              width={1412}
+              height={2006}
+              priority
+              sizes="(min-width: 1024px) 40vw, 320px"
+              className="h-auto w-full"
+            />
+          </div>
         </div>
       </section>
 

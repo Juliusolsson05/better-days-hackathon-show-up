@@ -7,11 +7,10 @@ import 'repository.dart';
 
 /// Real backend. Implements the same [Repository] contract as MockRepository.
 ///
-/// Wired: signup (email OTP + photo + `submit-profile`), the live group chat, the
-/// private question (all on 0001), and the whole after-meetup flow -- reflection,
-/// attendance, contact exchange (on 0002_after_meetup). The only methods still throwing
-/// [_notWired] are venue voting; its tables are in the draft and its retrieval pipeline
-/// is Julius's `feat/venue-pipeline`.
+/// Wired: signup (email OTP + photo + `submit-profile`), the live group chat and private
+/// question (0001), the after-meetup flow (0002), and persisted real-venue voting (0003).
+/// Keeping these behind [Repository] is still valuable after the backend is real: the mock
+/// remains the deterministic demo fallback when external services are unavailable.
 class SupabaseRepository implements Repository {
   SupabaseRepository(this._client);
 
@@ -42,7 +41,11 @@ class SupabaseRepository implements Repository {
 
   @override
   Future<void> verifyEmailOtp(String email, String token) async {
-    await _auth.verifyOTP(type: OtpType.email, email: email, token: token.trim());
+    await _auth.verifyOTP(
+      type: OtpType.email,
+      email: email,
+      token: token.trim(),
+    );
   }
 
   @override
@@ -60,19 +63,24 @@ class SupabaseRepository implements Repository {
       throw StateError('submitProfile called without a session');
     }
 
-    final photoUrl = photoPath == null ? null : await _uploadPhoto(uid, photoPath);
+    final photoUrl = photoPath == null
+        ? null
+        : await _uploadPhoto(uid, photoPath);
 
     // The function holds the ClickHouse and LLM secrets and does the embed + tag
     // extraction; it also upserts the profiles row, so the client never writes it
     // directly. supabase_flutter attaches the session JWT automatically.
-    final res = await _client.functions.invoke('submit-profile', body: {
-      'display_name': displayName,
-      'passion': passion,
-      'tags': tags,
-      'city': city,
-      'availability': availability,
-      'photo_url': ?photoUrl,
-    });
+    final res = await _client.functions.invoke(
+      'submit-profile',
+      body: {
+        'display_name': displayName,
+        'passion': passion,
+        'tags': tags,
+        'city': city,
+        'availability': availability,
+        'photo_url': ?photoUrl,
+      },
+    );
 
     if (res.status != 200) {
       final detail = res.data is Map ? res.data['error'] : res.data;
@@ -96,19 +104,18 @@ class SupabaseRepository implements Repository {
   Future<String> _uploadPhoto(String uid, String path) async {
     final bytes = await File(path).readAsBytes();
     final objectPath = '$uid/profile.jpg';
-    await _client.storage.from(_photoBucket).uploadBinary(
+    await _client.storage
+        .from(_photoBucket)
+        .uploadBinary(
           objectPath,
           bytes,
-          fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: true,
+          ),
         );
     return _client.storage.from(_photoBucket).getPublicUrl(objectPath);
   }
-
-  Never _notWired(String method) => throw UnimplementedError(
-        'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
-        'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
-        'Run the venue vote against MockRepository until then.',
-      );
 
   String get _uid {
     final id = _auth.currentUser?.id;
@@ -152,19 +159,32 @@ class SupabaseRepository implements Repository {
     );
   }
 
-  Message _messageFrom(Map<String, dynamic> row, Map<String, Member> members, String uid) {
-    final authorId = row['user_id'] as String;
-    final mine = authorId == uid;
-    final m = members[authorId];
+  Message _messageFrom(
+    Map<String, dynamic> row,
+    Map<String, Member> members,
+    String uid,
+  ) {
+    // Migration 0003 makes user_id nullable for server-authored vote/system cards. Treat a
+    // missing kind as `user` so this mapper remains compatible during a rolling migration,
+    // when cached rows or an older local database can still have the 0001 shape.
+    final kind = switch (row['kind'] as String?) {
+      'venue_vote' => MessageKind.venueVote,
+      'system' => MessageKind.system,
+      _ => MessageKind.user,
+    };
+    final authorId = row['user_id'] as String?;
+    final mine = kind == MessageKind.user && authorId == uid;
+    final m = authorId == null ? null : members[authorId];
     return Message(
       id: '${row['id']}',
       // 'me' is the sentinel Message.isMine checks; keeping the mock's convention means
       // group_chat_screen.dart needs no change to tell my bubbles from everyone else's.
-      authorId: mine ? 'me' : authorId,
-      authorName: m?.displayName ?? 'Someone',
+      authorId: mine ? 'me' : (authorId ?? 'system'),
+      authorName: kind == MessageKind.user ? (m?.displayName ?? 'Someone') : '',
       avatar: m?.avatar ?? '',
       body: (row['body'] as String?) ?? '',
       sentAt: DateTime.parse(row['created_at'] as String).toLocal(),
+      kind: kind,
     );
   }
 
@@ -186,25 +206,62 @@ class SupabaseRepository implements Repository {
 
     final members = (await _members(groupId)).values.toList();
 
-    // 0001 stores the single venue Claude already picked -- there is no ballot yet, so it
-    // is the chosen one. Venue voting (0002 / feat/venue-pipeline) will replace this with
-    // a real venue_options row set.
-    final venue = (g['venue'] as Map<String, dynamic>?) ?? const {};
-    final option = VenueOption(
-      id: 'venue-$groupId',
-      name: (venue['name'] as String?) ?? 'Venue to be confirmed',
-      address: (venue['address'] as String?) ?? '',
-      pitch: '',
-      categories: const [],
-    );
+    final optionRows = await _client
+        .from('venue_options')
+        .select(
+          'id, name, taxonomy_primary, address, lat, lng, pitch, position',
+        )
+        .eq('group_id', groupId)
+        .order('position');
+
+    final options = [
+      for (final row in optionRows)
+        VenueOption(
+          id: row['id'] as String,
+          name: row['name'] as String,
+          address: row['address'] as String,
+          pitch: row['pitch'] as String,
+          categories: [
+            (row['taxonomy_primary'] as String).replaceAll('_', ' '),
+          ],
+          lat: (row['lat'] as num?)?.toDouble(),
+          lng: (row['lng'] as num?)?.toDouble(),
+        ),
+    ];
+
+    String? chosenVenueId;
+    if (options.isNotEmpty) {
+      final selection = await _client
+          .from('venue_selections')
+          .select('option_id')
+          .eq('group_id', groupId)
+          .maybeSingle();
+      chosenVenueId = selection?['option_id'] as String?;
+    } else {
+      // groups.venue is the rollout fallback for groups formed before migration 0003. It
+      // stays readable until every environment has installed real options; deleting it now
+      // would turn a backwards-compatible migration into a coordinated flag day.
+      final venue = (g['venue'] as Map<String, dynamic>?) ?? const {};
+      final fallback = VenueOption(
+        id: 'venue-$groupId',
+        name: (venue['name'] as String?) ?? 'Venue to be confirmed',
+        address: (venue['address'] as String?) ?? '',
+        pitch: '',
+        categories: const [],
+        lat: (venue['lat'] as num?)?.toDouble(),
+        lng: (venue['lng'] as num?)?.toDouble(),
+      );
+      options.add(fallback);
+      chosenVenueId = fallback.id;
+    }
 
     return Group(
       id: g['id'] as String,
       eventAt: DateTime.parse(g['event_at'] as String).toLocal(),
       members: members,
-      venueOptions: [option],
+      venueOptions: options,
       activity: (g['activity'] as String?) ?? '',
-      chosenVenueId: option.id,
+      chosenVenueId: chosenVenueId,
     );
   }
 
@@ -234,14 +291,39 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> castVenueVote(String groupId, String optionId) async =>
-      _notWired('castVenueVote');
+  Future<void> castVenueVote(String groupId, String optionId) async {
+    // The RPC validates membership and the option/group pair, then recomputes the winner
+    // after the final member votes. A direct table upsert cannot enforce that whole contract
+    // atomically and would make a cross-group option ID a client-side concern.
+    await _client.rpc(
+      'cast_venue_vote',
+      params: {'grp': groupId, 'chosen': optionId},
+    );
+  }
 
   @override
-  Future<String?> myVenueVote(String groupId) async => _notWired('myVenueVote');
+  Future<String?> myVenueVote(String groupId) async {
+    final row = await _client
+        .from('venue_votes')
+        .select('option_id')
+        .eq('group_id', groupId)
+        .eq('user_id', _uid)
+        .maybeSingle();
+    return row?['option_id'] as String?;
+  }
 
   @override
-  Future<Map<String, int>> venueTally(String groupId) async => _notWired('venueTally');
+  Future<Map<String, int>> venueTally(String groupId) async {
+    // venue_tally is security-definer because clients cannot SELECT other people's ballots.
+    // Its output contains only option IDs and aggregate counts, preserving anonymity at the
+    // data boundary rather than asking the UI not to display voter rows it already received.
+    final rows =
+        await _client.rpc('venue_tally', params: {'grp': groupId}) as List;
+    return {
+      for (final row in rows.cast<Map<String, dynamic>>())
+        row['option_id'] as String: (row['votes'] as num).toInt(),
+    };
+  }
 
   @override
   Future<Assignment> assignment(String groupId) async {
@@ -270,8 +352,11 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitReflection(String groupId, String text,
-      {bool wasFallback = false}) async {
+  Future<void> submitReflection(
+    String groupId,
+    String text, {
+    bool wasFallback = false,
+  }) async {
     // reflections.about_user is NOT NULL. Normally it is your assigned pair. In the
     // fallback case the UI never asks *who* you learned about instead, so we still store
     // the assigned pair and let was_fallback record that the content is really about the
@@ -296,7 +381,10 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) async {
+  Future<void> submitAttendance(
+    String groupId,
+    Map<String, bool> showedUp,
+  ) async {
     if (showedUp.isEmpty) return;
     // One row per (me, subject). CHECK (voter_id <> subject_id) holds because the UI
     // builds this map from "everyone else" -- and _members() gives the current user id
@@ -338,7 +426,8 @@ class SupabaseRepository implements Repository {
     // The reciprocity + invisibility rules live entirely in this function (see
     // 0002_after_meetup.sql): it returns a row only for a pick that went both ways, and
     // nothing here separates "did not pick me" from "was not in the group".
-    final rows = await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
+    final rows =
+        await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
     return [
       for (final r in rows.cast<Map<String, dynamic>>())
         MutualContact(

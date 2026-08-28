@@ -104,6 +104,39 @@
   }
   footer b { color: var(--text); }
 
+  /* ---- Operator controls ----
+     A <details> so it is collapsed by default: the service-role key must not be sitting
+     on screen while the funnel is projected. Expand it, run the sweep, collapse it. */
+  .control {
+    margin-bottom: 34px; border: 1px solid var(--drop); border-radius: 12px;
+    background: color-mix(in srgb, var(--drop) 9%, var(--surface));
+  }
+  .control > summary {
+    cursor: pointer; padding: 12px 16px; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--drop);
+    list-style: none;
+  }
+  .control > summary::-webkit-details-marker { display: none; }
+  .control > summary::before { content: "▸ "; }
+  .control[open] > summary::before { content: "▾ "; }
+  .control .body { padding: 4px 16px 18px; }
+  .control .warn { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .control .grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .control label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .control input, .control select {
+    padding: 10px 12px; border-radius: 9px; border: 1px solid var(--track);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+  }
+  .control input#c-key { min-width: 320px; flex: 1; }
+  .control button {
+    padding: 10px 18px; border: 0; border-radius: 10px; background: var(--accent);
+    color: #1a1206; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .control button:disabled { opacity: .5; cursor: default; }
+  .control .out { margin-top: 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .control .out.ok { color: var(--ok); }
+  .control .out.bad { color: var(--drop); }
+
   /* ---- Config gate ---- */
   .gate { max-width: 460px; margin: 8vh auto; }
   .gate label { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
@@ -143,6 +176,44 @@
     </div>
   </header>
   <p class="sub">Notified → RSVP’d → attended → left with each other’s numbers. The last bar is the point of the product.</p>
+
+  <!--
+    Operator controls. There is no other trigger for run-matching yet: pg_cron is the
+    production path (not set up), and the phone app can't call it because the function
+    gates on the service-role key, which must never ship in a client binary. So the sweep
+    is run from here, from a laptop, by whoever is driving the demo.
+  -->
+  <details id="control" class="control">
+    <summary>Operator controls — run the sweep</summary>
+    <div class="body">
+      <p class="warn">
+        The service-role key bypasses row-level security entirely. Paste it only on your
+        own machine; it is kept in this browser’s localStorage and sent only to
+        <code>/functions/v1/run-matching</code>. Collapse this panel before projecting.
+      </p>
+      <div class="grid">
+        <div>
+          <label for="c-key">Service-role key</label>
+          <input id="c-key" type="password" placeholder="eyJ… service_role" autocomplete="off">
+        </div>
+        <div>
+          <label for="c-city">City</label>
+          <input id="c-city" value="SF" size="6">
+        </div>
+        <div>
+          <label for="c-slot">Slot</label>
+          <select id="c-slot">
+            <option>fri_eve</option>
+            <option>sat_day</option>
+            <option>sat_eve</option>
+            <option>sun_day</option>
+          </select>
+        </div>
+        <button id="c-run">Run the sweep</button>
+      </div>
+      <div id="c-out" class="out"></div>
+    </div>
+  </details>
 
   <div id="errArea" class="hidden">
     <p class="err-box" id="errMsg"></p>
@@ -342,6 +413,64 @@ function startLoop() {
   }, 5000);
 }
 
+/* ------------------------------------------------------------------ operator */
+
+// Trigger the weekly sweep. Same origin story as fetchAnalytics: run-matching now sets
+// CORS (its header comment always said it is browser-triggered), so a POST from this page
+// works. The key here is the SERVICE-ROLE key, not the anon key -- run-matching compares
+// the bearer token to SUPABASE_SERVICE_ROLE_KEY exactly, because a sweep writes groups for
+// people who are not the caller and must not be triggerable from a shipped app.
+async function runSweep() {
+  const btn = $("c-run");
+  const out = $("c-out");
+  const key = $("c-key").value.trim();
+  const city = $("c-city").value.trim() || "SF";
+  const slot = $("c-slot").value;
+
+  if (!key) { out.className = "out bad"; out.textContent = "Paste the service-role key first."; return; }
+  localStorage.setItem("su_service_key", key);
+
+  btn.disabled = true;
+  out.className = "out";
+  out.textContent = `Running the sweep for ${city} / ${slot}…`;
+
+  try {
+    const res = await fetch(`${CFG.url}/functions/v1/run-matching`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ city, slot }),
+    });
+    if (res.status === 403) {
+      out.className = "out bad";
+      out.textContent = "Rejected (403) — that is not the service-role key.";
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) {
+      out.className = "out bad";
+      out.textContent = body.error || `HTTP ${res.status}`;
+      return;
+    }
+    if (body.reason === "empty pool") {
+      out.className = "out bad";
+      out.textContent = `Empty pool — no embedded profiles in ${city} / ${slot} yet. Sign some up.`;
+      return;
+    }
+    out.className = "out ok";
+    out.textContent =
+      `Formed ${body.groups} group${body.groups === 1 ? "" : "s"} · ` +
+      `${body.unmatched} unmatched · ${body.skipped} skipped.`;
+    // The sweep just emitted group_formed events; pull the funnel forward now rather than
+    // waiting up to 15s for the next poll.
+    load();
+  } catch (e) {
+    out.className = "out bad";
+    out.textContent = `${e.message} — is run-matching deployed?`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ------------------------------------------------------------------ boot */
 
 function showGate() {
@@ -361,6 +490,8 @@ function showGate() {
 function showDash() {
   $("gate").classList.add("hidden");
   $("dash").classList.remove("hidden");
+  $("c-key").value = localStorage.getItem("su_service_key") || "";
+  $("c-run").onclick = runSweep;
   startLoop();
 }
 

@@ -16,9 +16,29 @@ Overture places, release 2026-08-19.0 — public S3, no credentials, no account
   SF bbox extract:  59,063 places in ~15 s   (bbox row-group stats prune the scan)
 
   45,860  confidence > 0.7
-  37,153  confidence > 0.7 AND operating_status = 'open'
-   6,661  social venues (bar 791, coffee_shop 481, cafe 411, music_venue 166, brewery 44)
+  37,107  confidence > 0.7 AND operating_status = 'open'
+   9,076  social, classified on the taxonomy tree (section 2.1)
 ```
+
+Also verified by running it, not by reading it:
+
+| | |
+|---|---|
+| ClickHouse Cloud | service live, 5 tables, `venue_vectors` loaded at 256 dims |
+| Voyage `voyage-4` | 256-dim vectors; needs paced batching, see below |
+| Claude `claude-opus-5` | `pitchVenues` returns group-aware copy, id guard holds |
+| `deno check` + tests | 7 functions, 6 unit tests, via `scripts/check.sh` |
+| PostgREST FK hint | `profiles!group_members_user_id_fkey` — verified against the live DB |
+
+**Two runtime bugs that type-checking could not see**, both found only by executing:
+`client.messages.parse` does not exist in the pinned SDK (structured output is under `beta`),
+and `betaZodOutputFormat` calls `z.toJSONSchema`, which requires **zod 4** — zod 3 satisfies
+the type signature but not the runtime. Both would have thrown from inside a request.
+
+**Voyage rate limits by the minute.** Embedding this corpus is ~19 requests; bursting them
+exhausts the window, and then every retry lands inside the same exhausted window, so the run
+dies having embedded nothing. Reactive backoff cannot recover from a limit it has already
+saturated — the ingest paces proactively at 21s between batches instead.
 
 The ClickHouse SQL in §3.2, executed against a live server: nested
 `{members:Array(Array(Float32))}` params work over HTTP, `cosineDistance` accepts a
@@ -74,22 +94,57 @@ venues. Do not let anyone spend time on this at 3pm.
 - **Pin the release string.** `categories` is deprecated in favour of `basic_category` +
   `taxonomy`; it still exists in this release, so pinning is prudence, not urgency.
 
-### 2.1 Use `taxonomy.primary`, not `basic_category`
+### 2.1 Use `taxonomy.primary` for the embed text, `taxonomy.hierarchy[1]` to classify
 
-Measured on the SF slice — this matters more than it looks:
+Two different fields for two different jobs.
 
-| field | granularity | example values |
+**For the embedded document, use `taxonomy.primary`.** `basic_category` is far too coarse —
+it collapses all 152 SF cocktail bars, every wine bar and every dive bar into the single token
+`bar`, which makes them indistinguishable in the vector space. `taxonomy.primary` separates
+them (`cocktail_bar`, `wine_bar`, `sushi_restaurant`, `ramen_restaurant`).
+
+**For deciding what belongs in the corpus at all, use the tree.** Overture's taxonomy is
+hierarchical, and the root level is where classification belongs:
+
+| root | places (SF) | in corpus |
 |---|---|---|
-| `basic_category` | ~252 labels in SF, mostly non-social | `restaurant`, `health_care`, `attorney_or_law_firm`, `dental_clinic` |
-| `taxonomy.primary` | cuisine / type level | `cocktail_bar`, `wine_bar`, `sushi_restaurant`, `bakery`, `music_venue` |
+| `food_and_drink` | 7,381 | ✅ |
+| `sports_and_recreation` | 1,326 | ✅ |
+| `arts_and_entertainment` | 1,214 | ✅ |
+| `cultural_and_historic` | 1,073 | ✅ |
+| `geographic_entities` | 95 | ✅ |
+| `services_and_business` | 9,100 | ❌ |
+| `health_care` · `shopping` · `lifestyle_services` · `education` · `lodging` · … | 15,286 | ❌ |
 
-`basic_category` collapses all 152 SF cocktail bars, every wine bar and every dive bar into one
-token, `bar`. `taxonomy.primary` separates them. Use it for the embed text and for
-diversification. Both are ~3–4% null, so the text builder needs a fallback.
+Root decides inclusion; a leaf can only **opt out**, never opt in.
 
-**The category vocabulary must be read, not guessed.** Plausible-looking names (`cafe`,
-`climbing_gym`, `cocktail_bar` as *basic* categories) return zero rows. Dump the distinct
-values before writing any filter.
+> **This replaced three hand-curated leaf lists, each of which was wrong.** Substring matching
+> admitted a nursery and gardening store, 252 fitness centres and a children's ballet academy
+> while missing `performing_arts_venue` and `social_club`. The exact list that replaced it
+> invented the label `climbing_gym`, which does not exist — so Mission Cliffs, Dogpatch
+> Boulders and Benchmark Climbing were all absent from a corpus then asked to find somewhere
+> for a group of climbers, and the semantic gate returned an art gallery. The real label is
+> `rock_climbing_spot`.
+>
+> The failure was the method. The SF slice has **1,231 distinct leaves**, and nobody reads
+> 1,231 of anything carefully, so each pass fixed the cases that had already embarrassed it
+> and missed the rest. Deciding at the root is exhaustive by construction — a leaf cannot be
+> overlooked because no leaf is consulted for inclusion — reviewable at 14 lines instead of
+> 1,231, and stable: leaves added in a future release inherit the right answer instead of
+> silently dropping out.
+
+The exclusions within social roots are chosen by reading the real vocabulary: gyms and
+studios (a class is not a conversation), stadiums (need a ticketed event), places of worship
+(not neutral ground for people matched on hobbies), `historic_site` (429 of SF's are plaques).
+
+**The vocabulary is committed and the classifier is replayed over it.**
+`clickhouse/taxonomy_tree.csv` holds every root/leaf pair with counts;
+`scripts/verify_taxonomy.py` runs `is_social()` across all of them and asserts the eight
+labels that must be admitted and the eight that must not. Each assertion is one of the bugs
+above. Run it after any change to the classifier — a list this long cannot be checked by
+reading it.
+
+Result: **9,076 of 37,107** open, confident SF places.
 
 ### 2.2 `confidence > 0.7` is not the closed-venue guard
 

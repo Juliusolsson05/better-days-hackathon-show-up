@@ -5,7 +5,10 @@
 // natural-language retrieval system over it, and submitting any of it to a generative model,
 // and the pitch call below is a generative model. See docs/VENUE_PIPELINE.md section 1.
 
-import { z } from 'npm:zod@3.24.1';
+// Zod 4, not 3: betaZodOutputFormat calls z.toJSONSchema, which does not exist in v3.
+// The two are structurally close enough that `deno check` passes either way, so this
+// only fails at runtime -- "z.toJSONSchema is not a function" from inside the request.
+import { z } from 'npm:zod@4.1.13';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.71.0';
 // Structured output lives under `beta` in 0.71.0: betaZodOutputFormat + client.beta.messages
 // .parse + `output_format` + `.parsed`. The non-beta `client.messages.parse` does not exist

@@ -166,11 +166,9 @@ class _AfterFlowState extends State<AfterFlow> {
           style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 20),
-        Container(
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(cardRadius),
-          ),
+        Material(
+          color: surface,
+          borderRadius: BorderRadius.circular(cardRadius),
           child: Column(
             children: [
               for (var i = 0; i < _others.length; i++) ...[
@@ -216,11 +214,9 @@ class _AfterFlowState extends State<AfterFlow> {
           style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 20),
-        Container(
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(cardRadius),
-          ),
+        Material(
+          color: surface,
+          borderRadius: BorderRadius.circular(cardRadius),
           child: Column(
             children: [
               for (var i = 0; i < _others.length; i++) ...[

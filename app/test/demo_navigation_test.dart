@@ -39,7 +39,8 @@ void main() {
     await tester.tap(find.text('Done'));
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.text('1 of you picked each other.'), findsOneWidget);
+    expect(find.textContaining('picked each other'), findsNothing);
     expect(find.text('Maya'), findsOneWidget);
+    expect(find.text('+1 415 555 0100'), findsOneWidget);
   });
 }

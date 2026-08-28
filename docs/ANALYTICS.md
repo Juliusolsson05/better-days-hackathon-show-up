@@ -32,6 +32,28 @@ The page polls every 15s so the numbers move as the audience RSVPs. The status d
 grey if an update is more than ~25s late — a wedged tab is visible from the back of the
 room.
 
+## Operator controls — running the sweep
+
+There is no other trigger for `run-matching` yet: `pg_cron` is the production path (not set
+up), and the phone app can't call it because the function gates on the **service-role
+key**, which must never ship in a client binary. So the demo driver runs it from here.
+
+Expand **"Operator controls — run the sweep"** (collapsed by default — the service key must
+not be on screen while the funnel is projected), paste the service-role key, set city/slot,
+hit **Run the sweep**. It POSTs to `/functions/v1/run-matching` and shows
+`groups formed / unmatched / skipped`, then pulls the funnel forward immediately instead of
+waiting for the next poll.
+
+- The service-role key **bypasses row-level security**. It is kept in that browser's
+  `localStorage` (key `su_service_key`) and sent only to `run-matching`. Clear it with
+  `localStorage.removeItem('su_service_key')` or by clearing site data.
+- "Empty pool" means no profiles in that city/slot have `embedded_at` set — sign some up
+  through the app (with `--dart-define=USE_SUPABASE=true`) first.
+- `run-matching` had **no CORS** and no `OPTIONS` handler; this change adds both (mirroring
+  `analytics/index.ts`) so a browser can call it. The `SUPABASE_SERVICE_ROLE_KEY` bearer
+  check is untouched — `Access-Control-Allow-Origin: *` only lets the response reach the
+  page, it authorises nothing.
+
 ## One deploy detail
 
 Supabase's function gateway wants a valid key even though `analytics/index.ts` itself does

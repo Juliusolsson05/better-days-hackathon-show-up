@@ -12,13 +12,24 @@ import { planGroup } from '../_shared/claude.ts';
 const MIN_GROUP = 4;
 const MAX_GROUP = 6;
 
+// The header comment says this is triggered "by a button during the demo" -- that button
+// is the operator dashboard (dashboard/index.html), a page served from a different origin,
+// so every response needs CORS or the browser never sees it, not even the 403. The auth
+// check below is the real gate; `*` here only lets the reply through, it grants nothing.
+// Mirrors supabase/functions/analytics/index.ts, which does the same for the same reason.
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, content-type',
+};
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
     const auth = req.headers.get('Authorization') ?? '';
     if (auth !== `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`) {
-      return new Response('forbidden', { status: 403 });
+      return new Response('forbidden', { status: 403, headers: CORS });
     }
 
     const { city = 'SF', slot = 'fri_eve' } = await req.json().catch(() => ({}));
@@ -36,7 +47,9 @@ Deno.serve(async (req) => {
       .contains('availability', [slot])
       .not('embedded_at', 'is', null);
     if (poolErr) throw poolErr;
-    if (!pool?.length) return Response.json({ groups: 0, reason: 'empty pool' });
+    if (!pool?.length) {
+      return Response.json({ groups: 0, reason: 'empty pool' }, { headers: CORS });
+    }
 
     const unassigned = new Map(pool.map((p) => [p.id, p]));
     const skipped: string[] = [];
@@ -173,10 +186,10 @@ Deno.serve(async (req) => {
       unmatched: unassigned.size,
       skipped: skipped.length,
       stats: lastStats,
-    });
+    }, { headers: CORS });
   } catch (err) {
     console.error(err);
-    return Response.json({ error: String(err) }, { status: 500 });
+    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
   }
 });
 

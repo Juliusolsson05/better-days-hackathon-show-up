@@ -1,3 +1,17 @@
+> [!WARNING]
+> **Superseded by [VENUE_PIPELINE.md](VENUE_PIPELINE.md). Do not implement this document.**
+>
+> The plan below is to pull ~300 venues from Yelp once, commit `venues.jsonl`, and embed it.
+> Yelp's API Terms forbid all three parts: content may not be stored beyond **24 hours**, may
+> not be used to "create your own database of business listing information", and may not be
+> used to create derivative works for GenAI models — an embedding is a derivative work, and a
+> persisted vector table is a listings database.
+>
+> The replacement uses **Overture Maps** (CDLA/Apache 2.0, public S3, storable and embeddable)
+> as the corpus, with Yelp demoted to an optional live, unstored, display-only enrichment
+> layer. The retrieval algorithm also changes: retrieving by group centroid returns the
+> blandest venue in the city to every group.
+
 # Venue matching — mapping groups to Yelp venues
 
 How a formed group gets 2–3 venue options to vote on, and where those options come from.

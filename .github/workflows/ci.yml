@@ -29,6 +29,12 @@ jobs:
         with:
           version: latest
 
+      # The managed ClickPipe is executable infrastructure, not deployment prose. Validation in
+      # the same product-contract job catches provider-schema drift before a production apply.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.8"
+
       # scripts/check.sh uses ripgrep to discover tests and scripts rather than maintaining a
       # second file manifest that drifts as agents add modules. GitHub's Ubuntu image does not
       # promise rg even though every development machine currently has it.

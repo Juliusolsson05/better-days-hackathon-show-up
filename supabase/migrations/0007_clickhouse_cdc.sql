@@ -67,7 +67,7 @@ alter publication show_up_clickhouse set table
 
 comment on publication show_up_clickhouse is
     'PII-minimized OLTP projection for the managed ClickHouse Postgres CDC ClickPipe. '
-    'The exact table and column contract is tested in supabase/tests/0005_clickhouse_cdc.sql.';
+    'The exact table and column contract is tested in supabase/tests/0007_clickhouse_cdc.sql.';
 
 -- Create the identity without a login or replication capability. The migration can safely land
 -- before the pipe because nobody can connect as this role yet; the deployment script supplies a

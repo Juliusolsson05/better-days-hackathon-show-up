@@ -264,7 +264,7 @@ Three different analytical shapes coexist intentionally:
 | `events` | Edge `emit()` | Behavioral facts such as opening a chat are not durable Postgres rows |
 | `cdc_*` | Managed ClickPipes | Durable groups, ballots, attendance, and lifecycle state should not depend on app dual-writes |
 
-Migration `0005_clickhouse_cdc.sql` owns the `show_up_clickhouse` publication and a dormant
+Migration `0007_clickhouse_cdc.sql` owns the `show_up_clickhouse` publication and a dormant
 `clickpipes_user`. The role bypasses RLS because replication must see all committed users, but it
 has column-level SELECT only for the analytical allowlist. Names, phone numbers, photo paths,
 message bodies, reflection prose, assignment questions, and venue addresses are not readable by

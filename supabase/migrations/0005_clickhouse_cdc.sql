@@ -50,7 +50,7 @@ alter publication show_up_clickhouse set table
         id, group_id, user_id, created_at, kind
     ),
     public.venue_options (
-        id, group_id, position, provider_id, kind, locality, score
+        id, group_id, position, kind, locality, score
     ),
     public.venue_votes (
         group_id, user_id, option_id, voted_at
@@ -76,9 +76,14 @@ comment on publication show_up_clickhouse is
 do $$
 begin
     if not exists (select 1 from pg_roles where rolname = 'clickpipes_user') then
-        create role clickpipes_user with nologin noreplication bypassrls;
+        create role clickpipes_user with
+            nologin noreplication nosuperuser nocreatedb nocreaterole noinherit bypassrls;
     else
-        alter role clickpipes_user with bypassrls;
+        -- A familiar role name is not proof that an old manual setup was least-privileged.
+        -- Normalize every authority unrelated to reading the reviewed projection so rerunning
+        -- the migration cannot preserve an accidental role-membership or DDL capability.
+        alter role clickpipes_user with
+            nosuperuser nocreatedb nocreaterole noinherit bypassrls;
     end if;
 end
 $$;
@@ -131,7 +136,10 @@ grant select (group_id, user_id, status)
     on public.rsvps to clickpipes_user;
 grant select (id, group_id, user_id, created_at, kind)
     on public.messages to clickpipes_user;
-grant select (id, group_id, position, provider_id, kind, locality, score)
+-- A provider ID can be resolved back to one exact venue through the upstream Places API, so it
+-- is precise location data even though it does not look like an address. Lifecycle analytics
+-- needs only the option identity, coarse locality/kind, and score.
+grant select (id, group_id, position, kind, locality, score)
     on public.venue_options to clickpipes_user;
 grant select (group_id, user_id, option_id, voted_at)
     on public.venue_votes to clickpipes_user;

@@ -80,7 +80,7 @@ resource "clickhouse_clickpipe" "postgres_cdc" {
           source_table       = "venue_options"
           target_table       = "cdc_venue_options"
           table_engine       = "ReplacingMergeTree"
-          excluded_columns   = ["address", "lat", "lng", "member_scores", "name", "pitch"]
+          excluded_columns   = ["address", "lat", "lng", "member_scores", "name", "pitch", "provider_id"]
         },
         {
           source_schema_name = "public"

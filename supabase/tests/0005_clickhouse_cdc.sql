@@ -33,7 +33,7 @@ begin
                     'id', 'group_id', 'user_id', 'created_at', 'kind'
                 ]::text[]),
                 ('venue_options', array[
-                    'id', 'group_id', 'position', 'provider_id', 'kind', 'locality', 'score'
+                    'id', 'group_id', 'position', 'kind', 'locality', 'score'
                 ]::text[]),
                 ('venue_votes', array[
                     'group_id', 'user_id', 'option_id', 'voted_at'
@@ -96,19 +96,37 @@ begin
 
     if not exists (
         select 1 from pg_roles
-        where rolname = 'clickpipes_user' and rolbypassrls
+        where rolname = 'clickpipes_user'
+          and rolbypassrls
+          and not rolsuper
+          and not rolcreatedb
+          and not rolcreaterole
+          and not rolinherit
     ) then
-        raise exception 'ClickPipes source role is missing or cannot see rows behind RLS';
+        raise exception 'ClickPipes source role is missing or has authority beyond replication';
     end if;
 
-    if not has_column_privilege('clickpipes_user', 'public.profiles', 'city', 'select')
-       or not has_column_privilege(
-           'clickpipes_user', 'public.contact_selections', 'selected_id', 'select'
-       )
-       or has_column_privilege('clickpipes_user', 'public.profiles', 'phone', 'select')
-       or has_column_privilege('clickpipes_user', 'public.profiles', 'photo_url', 'select')
-       or has_column_privilege('clickpipes_user', 'public.messages', 'body', 'select')
-       or has_column_privilege('clickpipes_user', 'public.reflections', 'what_stuck', 'select')
+    -- Spot-checking famous secrets is not enough: the source login is a second confidentiality
+    -- boundary because ClickPipes snapshots with ordinary SELECT before CDC starts. Compare every
+    -- granted column to the publication so a future private column is denied by default even if a
+    -- Terraform exclusion is accidentally omitted.
+    if exists (
+        with published as (
+            select tablename, unnest(attnames)::text as column_name
+            from pg_publication_tables
+            where pubname = 'show_up_clickhouse' and schemaname = 'public'
+        ), granted as (
+            select table_name as tablename, column_name
+            from information_schema.column_privileges
+            where grantee = 'clickpipes_user'
+              and table_schema = 'public'
+              and privilege_type = 'SELECT'
+        )
+        select 1
+        from published
+        full join granted using (tablename, column_name)
+        where published.tablename is null or granted.tablename is null
+    ) or has_column_privilege('clickpipes_user', 'public.venue_options', 'provider_id', 'select')
        or has_table_privilege('clickpipes_user', 'public.member_assignments', 'select') then
         raise exception 'ClickPipes source grants do not match the analytical privacy boundary';
     end if;

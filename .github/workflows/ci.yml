@@ -50,6 +50,15 @@ jobs:
       - name: Check every runtime contract
         run: ./scripts/check.sh
 
+      # Supabase and the pinned ClickHouse parser image together consume enough of GitHub's
+      # runner disk that Flutter can fail while writing app.dill even though the build is healthy.
+      # The contract gate has finished using both containers at this point, so release their
+      # layers before Gradle expands the Android toolchain and release artifact.
+      - name: Reclaim container disk before Android release
+        run: |
+          supabase stop --no-backup
+          docker system prune --all --force --volumes
+
       - name: Build Android release artifact
         working-directory: app
         run: flutter build apk --release --no-pub

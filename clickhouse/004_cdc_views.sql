@@ -30,7 +30,7 @@ FROM cdc_messages FINAL
 WHERE _peerdb_is_deleted = 0;
 
 CREATE OR REPLACE VIEW analytics_venue_options_current AS
-SELECT id, group_id, position, provider_id, kind, locality, score
+SELECT id, group_id, position, kind, locality, score
 FROM cdc_venue_options FINAL
 WHERE _peerdb_is_deleted = 0;
 

@@ -360,7 +360,8 @@ Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 - [ ] Verify migration `0002` created the private `photos` bucket and storage policies
 - [ ] Create ClickHouse Cloud service, note the HTTPS endpoint and password
 - [ ] Fill `.env` from `.env.example`
-- [ ] `supabase secrets set --env-file .env`
+- [ ] Copy only function-runtime values to `.env.functions`, then run
+      `supabase secrets set --env-file .env.functions`
 - [ ] `supabase functions deploy`
 - [ ] Run `clickhouse/001_schema.sql`
 - [ ] ⚠ Run `scripts/seed_archetypes.py` **before** the seed SQL

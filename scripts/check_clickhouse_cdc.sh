@@ -50,7 +50,7 @@ CREATE TABLE cdc_messages (
   _peerdb_version UInt64, _peerdb_is_deleted UInt8
 ) ENGINE=ReplacingMergeTree(_peerdb_version) ORDER BY id;
 CREATE TABLE cdc_venue_options (
-  id UUID, group_id UUID, position Int16, provider_id String, kind String, locality String,
+  id UUID, group_id UUID, position Int16, kind String, locality String,
   score Nullable(Float32), _peerdb_version UInt64, _peerdb_is_deleted UInt8
 ) ENGINE=ReplacingMergeTree(_peerdb_version) ORDER BY id;
 CREATE TABLE cdc_venue_votes (

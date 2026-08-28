@@ -19,8 +19,44 @@ run "privacy_and_identity_contract" {
   }
 
   assert {
+    condition = toset([
+      for mapping in clickhouse_clickpipe.postgres_cdc.source.postgres.table_mappings :
+      mapping.source_table
+      ]) == toset([
+      "profiles",
+      "groups",
+      "group_members",
+      "rsvps",
+      "messages",
+      "venue_options",
+      "venue_votes",
+      "reflections",
+      "attendance_votes",
+      "contact_selections",
+    ])
+    error_message = "the ClickPipe source table allowlist drifted from the Postgres publication"
+  }
+
+  assert {
     condition     = clickhouse_clickpipe.postgres_cdc.source.postgres.settings.publication_name == "show_up_clickhouse"
     error_message = "ClickPipes must consume the migration-owned privacy publication"
+  }
+
+
+  assert {
+    condition = one([
+      for mapping in clickhouse_clickpipe.postgres_cdc.source.postgres.table_mappings :
+      mapping.excluded_columns if mapping.source_table == "groups"
+    ]) == toset(["formation_key", "venue"])
+    error_message = "legacy venue details or idempotency secrets would enter ClickHouse"
+  }
+
+  assert {
+    condition = one([
+      for mapping in clickhouse_clickpipe.postgres_cdc.source.postgres.table_mappings :
+      mapping.excluded_columns if mapping.source_table == "venue_options"
+    ]) == toset(["address", "lat", "lng", "member_scores", "name", "pitch", "provider_id"])
+    error_message = "precise venue details or per-member scores would enter ClickHouse"
   }
 
   assert {

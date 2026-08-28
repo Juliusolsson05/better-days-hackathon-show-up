@@ -11,35 +11,43 @@
 // whole population. This function is the seam -- it holds the credential, and the only
 // thing the client can do through it is append a row about itself.
 
-import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
-import { emit } from '../_shared/clickhouse.ts';
+import { createClient } from "npm:@supabase/supabase-js@2.47.10";
+import { emit } from "../_shared/clickhouse.ts";
 import {
   parseTrackingRequest,
   TrackingRequestError,
-} from '../_shared/tracking.ts';
+} from "../_shared/tracking.ts";
 
 Deno.serve(async (req) => {
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
   try {
-    const auth = req.headers.get('Authorization');
-    if (!auth) return new Response('unauthorized', { status: 401 });
+    const auth = req.headers.get("Authorization");
+    if (!auth) return new Response("unauthorized", { status: 401 });
 
     // Anon key + caller JWT: the user id comes from the verified token and nowhere else.
     // Accepting a user_id from the body would let any caller write another person's
     // funnel, which is the whole reason this is a function and not a direct insert.
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: auth } } },
     );
     const { data: user } = await supabase.auth.getUser();
-    if (!user?.user) return new Response('unauthorized', { status: 401 });
+    if (!user?.user) return new Response("unauthorized", { status: 401 });
     const uid = user.user.id;
 
     let body: unknown;
     try {
       body = await req.json();
     } catch {
-      return Response.json({ error: 'body must be valid JSON' }, { status: 400 });
+      return Response.json({ error: "body must be valid JSON" }, {
+        status: 400,
+      });
     }
     const { accepted, rejected } = parseTrackingRequest(body);
 
@@ -47,14 +55,16 @@ Deno.serve(async (req) => {
     // A forged group_id would not leak anything -- events are write-only from here -- but
     // it would silently corrupt every per-group number on the dashboard, which is worse
     // than an error because nobody would notice.
-    const groupIds = [...new Set(accepted.map((e) => e.group_id).filter(Boolean))] as string[];
+    const groupIds = [
+      ...new Set(accepted.map((e) => e.group_id).filter(Boolean)),
+    ] as string[];
     let mine = new Set<string>();
     if (groupIds.length) {
       const { data: rows, error } = await supabase
-        .from('group_members')
-        .select('group_id')
-        .eq('user_id', uid)
-        .in('group_id', groupIds);
+        .from("group_members")
+        .select("group_id")
+        .eq("user_id", uid)
+        .in("group_id", groupIds);
       if (error) throw error;
       mine = new Set((rows ?? []).map((r) => r.group_id as string));
     }
@@ -84,6 +94,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: err.message }, { status: 400 });
     }
     console.error(err);
-    return Response.json({ error: String(err) }, { status: 500 });
+    // Authenticated callers do not need ClickHouse SQL, host details, or provider response bodies
+    // to recover. Keep the actionable detail in function logs and return a stable client contract.
+    return Response.json({ error: "tracking unavailable" }, { status: 500 });
   }
 });

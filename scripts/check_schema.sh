@@ -21,6 +21,7 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when to_regprocedure('private.invoke_weekly_matching()') is not null then '0012'
      when to_regprocedure(
           'public.complete_profile_submission(uuid,uuid,timestamp with time zone)'
         ) is not null then '0011'
@@ -63,8 +64,9 @@ case "$SCHEMA_STATE" in
   0009) SCHEMA_RANK=9 ;;
   0010) SCHEMA_RANK=10 ;;
   0011) SCHEMA_RANK=11 ;;
+  0012) SCHEMA_RANK=12 ;;
   *)
-    echo "local database is not a recognized 0001 through 0011 Show Up schema"
+    echo "local database is not a recognized 0001 through 0012 Show Up schema"
     exit 1
     ;;
 esac
@@ -94,6 +96,7 @@ if (( SCHEMA_RANK < 8 )); then PSQL_FILES+=(-f supabase/migrations/0008_reflecti
 if (( SCHEMA_RANK < 9 )); then PSQL_FILES+=(-f supabase/migrations/0009_profile_write_boundary.sql); fi
 if (( SCHEMA_RANK < 10 )); then PSQL_FILES+=(-f supabase/migrations/0010_post_meetup_write_boundary.sql); fi
 if (( SCHEMA_RANK < 11 )); then PSQL_FILES+=(-f supabase/migrations/0011_profile_submission_version.sql); fi
+if (( SCHEMA_RANK < 12 )); then PSQL_FILES+=(-f supabase/migrations/0012_weekly_matching_cron.sql); fi
 
 # Every suite runs against the final in-transaction shape. Older tests protect invariants shared by
 # later migrations, while 0008/0009 specifically exercise the two write doors that moved behind
@@ -111,6 +114,7 @@ PSQL_FILES+=(
   -f supabase/tests/0009_profile_write_boundary.sql
   -f supabase/tests/0010_post_meetup_write_boundary.sql
   -f supabase/tests/0011_profile_submission_version.sql
+  -f supabase/tests/0012_weekly_matching_cron.sql
 )
 
 psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \

@@ -31,6 +31,8 @@ type StoredVenueOption = {
   pitch: string;
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function storedOption(option: StoredVenueOption) {
   return {
     position: option.position,
@@ -48,13 +50,33 @@ function storedOption(option: StoredVenueOption) {
 }
 
 Deno.serve(async (req) => {
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
   try {
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const auth = req.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`) {
+    if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
       return new Response("forbidden", { status: 403 });
     }
 
-    const body = await req.json().catch(() => ({}));
+    let input: unknown;
+    try {
+      input = await req.json();
+    } catch {
+      return Response.json({ error: "body must be valid JSON" }, {
+        status: 400,
+      });
+    }
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      return Response.json({ error: "body must be a JSON object" }, {
+        status: 400,
+      });
+    }
+    const body = input as Record<string, unknown>;
     const { group_id, radius_m, limit = 3 } = body as {
       group_id?: string;
       radius_m?: number;
@@ -62,6 +84,24 @@ Deno.serve(async (req) => {
     };
     if (!Number.isInteger(limit) || limit < 2 || limit > 3) {
       return Response.json({ error: "limit must be an integer from 2 to 3" }, {
+        status: 400,
+      });
+    }
+    if (
+      group_id !== undefined &&
+      (typeof group_id !== "string" || !UUID.test(group_id))
+    ) {
+      return Response.json({ error: "group_id must be a UUID" }, {
+        status: 400,
+      });
+    }
+    if (
+      radius_m !== undefined &&
+      (typeof radius_m !== "number" || !Number.isFinite(radius_m) ||
+        radius_m <= 0 ||
+        radius_m > 100_000)
+    ) {
+      return Response.json({ error: "radius_m must be between 1 and 100000" }, {
         status: 400,
       });
     }
@@ -122,7 +162,32 @@ Deno.serve(async (req) => {
         };
       });
     } else {
-      members = (body.members ?? []) as typeof members;
+      const rawMembers = body.members ?? [];
+      if (!Array.isArray(rawMembers) || rawMembers.length > 6) {
+        return Response.json({
+          error: "members must be an array with at most 6 entries",
+        }, {
+          status: 400,
+        });
+      }
+      const valid = rawMembers.every((member) => {
+        if (
+          member === null || typeof member !== "object" || Array.isArray(member)
+        ) return false;
+        const row = member as Record<string, unknown>;
+        return typeof row.display_name === "string" &&
+          row.display_name.trim().length > 0 &&
+          typeof row.passion === "string" && row.passion.trim().length > 0 &&
+          Array.isArray(row.tags) && row.tags.every((tag) =>
+            typeof tag === "string"
+          );
+      });
+      if (!valid) {
+        return Response.json({ error: "members contain an invalid profile" }, {
+          status: 400,
+        });
+      }
+      members = rawMembers as typeof members;
     }
 
     if (!members.length) {

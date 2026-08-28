@@ -23,26 +23,69 @@ const MAX_GROUP = 6;
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+const SLOTS = new Set(["fri_eve", "sat_day", "sat_eve", "sun_day"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { ...CORS, Allow: "POST, OPTIONS" },
+    });
+  }
   try {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const auth = req.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`) {
+    if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
       return new Response("forbidden", { status: 403, headers: CORS });
     }
 
-    const { city = "SF", slot = "fri_eve" } = await req.json().catch(
-      () => ({}),
-    );
+    let input: unknown;
+    try {
+      input = await req.json();
+    } catch {
+      // Defaulting malformed JSON to the default city/slot turns a typo in an operator or cron
+      // request into a real paid matching sweep. Only a valid empty object may choose defaults.
+      return Response.json({ error: "body must be valid JSON" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      return Response.json({ error: "body must be a JSON object" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    const raw = input as Record<string, unknown>;
+    const city = raw.city === undefined ? "SF" : raw.city;
+    const slot = raw.slot === undefined ? "fri_eve" : raw.slot;
+    if (
+      typeof city !== "string" || city.trim().length === 0 ||
+      city.trim().length > 80
+    ) {
+      return Response.json({ error: "city must be 1-80 characters" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    if (typeof slot !== "string" || !SLOTS.has(slot)) {
+      return Response.json({ error: "slot is not supported" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    const normalizedCity = city.trim();
     const eventAt = nextSlot(slot);
     // This key is stable for every retry targeting the same city, availability bucket, and
     // actual meetup. It scopes the database's "one user, one group" invariant to a cycle rather
     // than incorrectly preventing a person from ever joining a future Show Up event.
-    const runKey = `${city.toLowerCase()}:${slot}:${eventAt}`;
+    const runKey = `${normalizedCity.toLowerCase()}:${slot}:${eventAt}`;
 
     // Service role: this runs as the system, not as any user, and writes groups for
     // people who are not the caller.
@@ -68,7 +111,7 @@ Deno.serve(async (req) => {
       .select(
         "id, display_name, passion, tags, embedded_at, embedding_submission_id",
       )
-      .eq("city", city)
+      .eq("city", normalizedCity)
       .contains("availability", [slot])
       .not("embedded_at", "is", null);
     if (poolErr) throw poolErr;
@@ -159,7 +202,7 @@ Deno.serve(async (req) => {
         {
           vec: arr(self[0].embedding),
           self: seed,
-          city,
+          city: normalizedCity,
           avail: arr([slot]),
           pool: arr([...unassigned.keys()]),
           blocked: arr(opposingStances(seedTags)),
@@ -208,7 +251,7 @@ Deno.serve(async (req) => {
           passion: m.passion,
           tags: m.tags,
         })),
-        city,
+        normalizedCity,
       );
 
       // The model returns user_ids as free strings. Writing them straight into a table

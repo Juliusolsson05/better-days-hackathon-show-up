@@ -1,6 +1,6 @@
 # Close the production lifecycle gaps
 
-Issues: #30, #39, #40
+Issues: #30, #39, #40, #42
 
 ## Deadline scope
 
@@ -30,6 +30,9 @@ these user-visible source-of-truth connections.
    then build the Flutter release with the hosted project configuration and smoke-test the public
    authentication boundaries. Provider-backed success paths remain gated on non-placeholder
    Voyage, Anthropic, and ClickHouse credentials.
+8. Close the final deployment wiring: install matching through a Vault-backed schedule, make every
+   operator-only function's trigger explicit, and reject placeholder provider configuration before
+   it reaches a user-facing request.
 
 ## Non-negotiable invariants
 

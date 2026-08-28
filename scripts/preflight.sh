@@ -82,6 +82,43 @@ else
   printf '✓ local and hosted migration versions agree\n'
 fi
 
+printf '→ deployed function manifest\n'
+functions_json="$(supabase functions list --output json)"
+function_failures="$({
+  # A directory on disk is not a deployed endpoint, and analytics' verify_jwt exception used to
+  # live only in a one-off CLI command. Compare the complete hosted manifest so a generic deploy,
+  # stale function, or omitted system-to-system dependency fails before a device reaches it.
+  printf '%s' "$functions_json" | python3 -c '
+import json
+import sys
+
+expected = {
+    "analytics": False,
+    "open-chat": True,
+    "pick-venues": True,
+    "run-matching": True,
+    "submit-profile": True,
+    "track": True,
+}
+actual = {entry["slug"]: entry for entry in json.load(sys.stdin)}
+for slug, verify_jwt in expected.items():
+    entry = actual.get(slug)
+    if entry is None:
+        print(f"missing deployed function: {slug}")
+        continue
+    if entry.get("status") != "ACTIVE":
+        print(f"deployed function is not active: {slug}")
+    if entry.get("verify_jwt") is not verify_jwt:
+        print(f"verify_jwt drift for {slug}: expected {str(verify_jwt).lower()}")
+'
+})"
+if [[ -n "$function_failures" ]]; then
+  printf '%s\n' "$function_failures" >&2
+  failed=1
+else
+  printf '✓ all six functions are active with the reviewed JWT policy\n'
+fi
+
 if (( failed )); then
   printf 'hosted preflight failed; repair the items above before exercising the real API\n' >&2
   exit 1

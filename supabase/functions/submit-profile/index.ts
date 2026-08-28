@@ -17,6 +17,12 @@ import {
 } from "../_shared/profile_submission.ts";
 
 Deno.serve(async (req) => {
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
   try {
     const auth = req.headers.get("Authorization");
     if (!auth) return new Response("unauthorized", { status: 401 });

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:showup/core/notifications.dart';
 import 'package:showup/data/mock_repository.dart';
 import 'package:showup/models/models.dart';
 import 'package:showup/state/app_state.dart';
@@ -95,6 +96,40 @@ void main() {
       final nextLaunch = AppState(repo);
       await nextLaunch.restore();
       expect(nextLaunch.phase, Phase.matched);
+    },
+  );
+
+  test(
+    'entering a newly discovered past group cannot bypass after-flow',
+    () async {
+      final repo = _PastMeetupRepository();
+      addTearDown(repo.dispose);
+      await _completeProfile(repo);
+      final state = AppState(repo, initialPhase: Phase.waiting);
+
+      await state.enterGroup();
+
+      expect(state.group?.id, 'past-group');
+      expect(state.phase, Phase.after);
+    },
+  );
+
+  test(
+    'a stale reflection notification cannot reopen completed after-flow',
+    () async {
+      final repo = _PastMeetupRepository();
+      addTearDown(repo.dispose);
+      await _completeProfile(repo);
+      await repo.selectContacts('past-group', const {});
+      final state = AppState(repo);
+      await state.restore();
+      expect(state.phase, Phase.matched);
+
+      await state.handleNotificationTap(
+        const NotificationTap('past-group', Rung.reflect),
+      );
+
+      expect(state.phase, Phase.matched);
     },
   );
 

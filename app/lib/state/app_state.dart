@@ -142,15 +142,12 @@ class AppState extends ChangeNotifier {
 
   /// Group formation and the chat opening are the same event -- there is no lobby.
   Future<void> enterGroup() async {
-    group = await repo.currentGroup();
-    if (group == null) return;
-    assignment = await repo.assignment(group!.id);
-    phase = Phase.matched;
+    // Entering from Waiting is not proof that the meetup is still upcoming. A backgrounded app
+    // can sit on that screen until well after the event, and forcing `matched` here would bypass
+    // the server-backed after-flow completion check used during cold restoration. One resolver
+    // must own both paths so elapsed wall time cannot create two different product histories.
+    await _loadProductPhase();
     notifyListeners();
-    // Arm the ladder only once the user is actually looking at their group. Asking for
-    // notification permission at launch, before they know what the app is, is how you get
-    // a denial -- and on iOS a denial is close to permanent.
-    _armLadderOnce();
   }
 
   void _armLadderOnce() {
@@ -213,18 +210,19 @@ class AppState extends ChangeNotifier {
         tap.groupId,
         tap.action == 'rsvp_yes' ? RsvpStatus.confirmed : RsvpStatus.declined,
       );
-      phase = Phase.matched;
+      // RSVP changes attendance intent, not lifecycle eligibility. Re-resolve the durable phase
+      // after the write so a delayed lock-screen action cannot move a post-meetup user out of an
+      // incomplete recap or reopen one they already completed.
+      await _loadProductPhase();
       notifyListeners();
       return;
     }
 
-    phase = switch (tap.rung) {
-      Rung.reveal ||
-      Rung.confirm ||
-      Rung.morning ||
-      Rung.doorway => Phase.matched,
-      Rung.reflect => Phase.after,
-    };
+    // A notification rung says why the app was opened; it is not durable navigation state. Local
+    // notifications can be tapped days late, so routing from the rung alone let an old reflection
+    // notification reopen a sealed after-flow and let a pre-event rung skip a now-due recap. The
+    // current group time plus its completion row are the authoritative destination.
+    await _loadProductPhase();
     notifyListeners();
   }
 

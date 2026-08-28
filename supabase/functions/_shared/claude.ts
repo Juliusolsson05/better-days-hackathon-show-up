@@ -17,7 +17,15 @@ import { z } from "npm:zod@4.1.13";
 // SDK produces either a compile failure or a 500 during the matching sweep.
 import { betaZodOutputFormat } from "npm:@anthropic-ai/sdk@0.71.0/helpers/beta/zod";
 
-const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
+let client: Anthropic | undefined;
+
+function anthropic(): Anthropic {
+  // Lazy construction keeps local contract tests and cheap auth rejections independent from
+  // provider configuration, but fails with the exact repair target before spending other work.
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("missing secret ANTHROPIC_API_KEY");
+  return client ??= new Anthropic({ apiKey });
+}
 
 const ProfileTags = z.object({
   topics: z.array(z.string()).describe("3-6 normalised interest topics"),
@@ -38,7 +46,7 @@ export async function extractTags(
   passion: string,
   tags: string[],
 ): Promise<ProfileTags> {
-  const res = await client.beta.messages.parse({
+  const res = await anthropic().beta.messages.parse({
     model: "claude-opus-5",
     max_tokens: 2000,
     output_format: betaZodOutputFormat(ProfileTags),
@@ -84,7 +92,7 @@ export async function planGroup(
   }[],
   city: string,
 ): Promise<GroupPlan> {
-  const res = await client.beta.messages.parse({
+  const res = await anthropic().beta.messages.parse({
     model: "claude-opus-5",
     max_tokens: 16000,
     // Thinking tokens count against max_tokens. A structured object truncated mid-write

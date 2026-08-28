@@ -60,7 +60,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // The no-show verdict only exists after peers submit attendance. Checking when chat opens
     // makes the private acknowledgement reachable after a cold start, while waiting one frame
     // avoids presenting a modal before this route owns a valid Navigator context.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The acknowledgement is a private, best-effort read after chat has already opened. A
+      // transient RPC or preferences failure must not escape the post-frame callback as an
+      // unhandled asynchronous error; reopening the room naturally retries the durable verdict.
+      unawaited(_maybeAckNoShow().catchError((_) {}));
+    });
 
     if (widget.state.group!.venueNeedsRefresh) {
       // Ballots are private, so an earlier voter receives no realtime row when somebody else's
@@ -153,19 +158,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (text.isEmpty) return;
     final groupId = widget.state.group!.id;
 
-    // Delivery failure is represented by the optimistic bubble itself. Swallowing the Future
-    // here prevents the same expected network failure from also becoming an unhandled zone
-    // error; the repository emits MessageStatus.failed and preserves the idempotent retry key.
-    unawaited(widget.state.repo.sendMessage(groupId, text).catchError((_) {}));
-
-    if (!_hasSpoken) {
-      _hasSpoken = true;
-      // Only the silent-to-speaking transition answers the funnel question. Per-message events
-      // would measure prolific people instead of whether a formed group started interacting.
-      unawaited(
-        widget.state.repo.track('chat_first_message', groupId: groupId),
-      );
-    }
+    final shouldTrackFirstMessage = !_hasSpoken;
+    if (shouldTrackFirstMessage) _hasSpoken = true;
+    unawaited(() async {
+      try {
+        // The database write is the product fact; analytics may observe it only after it commits.
+        // Emitting first-message before sendMessage completed counted failed optimistic bubbles as
+        // conversation and could permanently suppress the event when the later retry succeeded.
+        await widget.state.repo.sendMessage(groupId, text);
+        if (shouldTrackFirstMessage) {
+          await widget.state.repo.track('chat_first_message', groupId: groupId);
+        }
+      } catch (_) {
+        // The repository already changes the optimistic bubble to failed and keeps its idempotency
+        // key. Restore only this local funnel guard so a later successful send can be observed.
+        if (shouldTrackFirstMessage) _hasSpoken = false;
+      }
+    }());
     _input.clear();
   }
 

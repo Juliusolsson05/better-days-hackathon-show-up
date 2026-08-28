@@ -84,15 +84,19 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
             children: [
               const Icon(Icons.how_to_vote_outlined, size: 18, color: accent),
               const SizedBox(width: 8),
-              const Text(
-                'Where should you go?',
+              Text(
+                g.chosenVenue == null
+                    ? 'Where should you go?'
+                    : '${g.chosenVenue!.name} selected',
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
               ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'Anonymous — nobody sees who picked what.',
+            g.chosenVenue == null
+                ? 'Anonymous — nobody sees who picked what.'
+                : 'The result is shared. Individual ballots stay private.',
             style: TextStyle(
               fontSize: 12,
               color: Colors.white.withValues(alpha: 0.5),
@@ -114,6 +118,7 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
 
   Widget _option(VenueOption v, int votes, int total) {
     final mine = _myVote == v.id;
+    final selected = widget.state.group!.chosenVenueId == v.id;
     final share = total == 0 ? 0.0 : votes / total;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -125,8 +130,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: mine ? accent : Colors.white.withValues(alpha: 0.12),
-              width: mine ? 1.5 : 1,
+              color: mine || selected
+                  ? accent
+                  : Colors.white.withValues(alpha: 0.12),
+              width: mine || selected ? 1.5 : 1,
             ),
           ),
           child: Column(
@@ -140,6 +147,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
+                  if (selected) ...[
+                    const Icon(Icons.check_circle, size: 16, color: accent),
+                    const SizedBox(width: 6),
+                  ],
                   Text(
                     '$votes',
                     style: TextStyle(

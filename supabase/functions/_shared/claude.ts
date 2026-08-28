@@ -8,8 +8,14 @@
 // next to a hunter and calling it a great match. Embedding = recall, tags = precision.
 
 import Anthropic from 'npm:@anthropic-ai/sdk@0.71.0';
-import { z } from 'npm:zod@3.24.1';
-import { zodOutputFormat } from 'npm:@anthropic-ai/sdk@0.71.0/helpers/zod';
+// The SDK's beta structured-output helper calls `z.toJSONSchema`, which only exists in
+// Zod 4. Zod 3 is structurally similar enough that this mismatch used to survive casual
+// review and fail only after a production request reached the helper.
+import { z } from 'npm:zod@4.1.13';
+// SDK 0.71 exposes structured parsing through the beta namespace. Keep the helper, client
+// method, and request key as one versioned trio: mixing the stable-looking names from a newer
+// SDK produces either a compile failure or a 500 during the matching sweep.
+import { betaZodOutputFormat } from 'npm:@anthropic-ai/sdk@0.71.0/helpers/beta/zod';
 
 const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
 
@@ -27,10 +33,10 @@ export type ProfileTags = z.infer<typeof ProfileTags>;
 
 /** Simple classification -- low effort is the right setting and keeps it fast. */
 export async function extractTags(passion: string, tags: string[]): Promise<ProfileTags> {
-  const res = await client.messages.parse({
+  const res = await client.beta.messages.parse({
     model: 'claude-opus-5',
     max_tokens: 2000,
-    output_config: { format: zodOutputFormat(ProfileTags), effort: 'low' },
+    output_format: betaZodOutputFormat(ProfileTags),
     messages: [{
       role: 'user',
       content: `Self-selected tags: ${tags.join(', ')}\n\nWhat they are passionate about:\n${passion}`,
@@ -67,13 +73,14 @@ export async function planGroup(
   members: { user_id: string; display_name: string; passion: string; tags: string[] }[],
   city: string,
 ): Promise<GroupPlan> {
-  const res = await client.messages.parse({
+  const res = await client.beta.messages.parse({
     model: 'claude-opus-5',
     max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    // effort medium: thinking tokens count against max_tokens, and at high effort the
-    // structured object can be truncated mid-write, which surfaces as parsed_output null.
-    output_config: { format: zodOutputFormat(GroupPlan), effort: 'medium' },
+    // Thinking tokens count against max_tokens. A structured object truncated mid-write
+    // surfaces as null parsed_output, so reserve most of the budget for the object. This SDK
+    // accepts only enabled/disabled here; `adaptive` belongs to a newer request contract.
+    thinking: { type: 'enabled', budget_tokens: 6000 },
+    output_format: betaZodOutputFormat(GroupPlan),
     messages: [{
       role: 'user',
       content: `City: ${city}\n\n${members.map((m) =>

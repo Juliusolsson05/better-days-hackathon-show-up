@@ -69,12 +69,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         maxWidth: 1200,
         imageQuality: 82,
       );
-      if (picked != null && mounted) setState(() => _photo = picked);
+      if (picked != null && mounted) {
+        setState(() => _photo = picked);
+      }
     } catch (_) {
       // Permission denied, or the picker channel threw. Nothing actionable to show
       // beyond letting them try again.
-      if (mounted)
+      if (mounted) {
         _toast('Could not open your photos. Check the app permission.');
+      }
     }
   }
 
@@ -98,7 +101,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     setState(() {
       final known = _interests.contains(tag) || _extraTags.contains(tag);
-      if (!known) _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      if (!known) {
+        _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      }
       _picked.add(known ? tag : _extraTags.last);
       _customTag.clear();
     });

@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/models.dart';
@@ -42,7 +45,11 @@ class SupabaseRepository implements Repository {
 
   @override
   Future<void> verifyEmailOtp(String email, String token) async {
-    await _auth.verifyOTP(type: OtpType.email, email: email, token: token.trim());
+    await _auth.verifyOTP(
+      type: OtpType.email,
+      email: email,
+      token: token.trim(),
+    );
   }
 
   @override
@@ -60,19 +67,24 @@ class SupabaseRepository implements Repository {
       throw StateError('submitProfile called without a session');
     }
 
-    final photoUrl = photoPath == null ? null : await _uploadPhoto(uid, photoPath);
+    final photoUrl = photoPath == null
+        ? null
+        : await _uploadPhoto(uid, photoPath);
 
     // The function holds the ClickHouse and LLM secrets and does the embed + tag
     // extraction; it also upserts the profiles row, so the client never writes it
     // directly. supabase_flutter attaches the session JWT automatically.
-    final res = await _client.functions.invoke('submit-profile', body: {
-      'display_name': displayName,
-      'passion': passion,
-      'tags': tags,
-      'city': city,
-      'availability': availability,
-      'photo_url': ?photoUrl,
-    });
+    final res = await _client.functions.invoke(
+      'submit-profile',
+      body: {
+        'display_name': displayName,
+        'passion': passion,
+        'tags': tags,
+        'city': city,
+        'availability': availability,
+        'photo_url': ?photoUrl,
+      },
+    );
 
     if (res.status != 200) {
       final detail = res.data is Map ? res.data['error'] : res.data;
@@ -96,19 +108,24 @@ class SupabaseRepository implements Repository {
   Future<String> _uploadPhoto(String uid, String path) async {
     final bytes = await File(path).readAsBytes();
     final objectPath = '$uid/profile.jpg';
-    await _client.storage.from(_photoBucket).uploadBinary(
+    await _client.storage
+        .from(_photoBucket)
+        .uploadBinary(
           objectPath,
           bytes,
-          fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: true,
+          ),
         );
     return _client.storage.from(_photoBucket).getPublicUrl(objectPath);
   }
 
   Never _notWired(String method) => throw UnimplementedError(
-        'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
-        'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
-        'Run the venue vote against MockRepository until then.',
-      );
+    'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
+    'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
+    'Run the venue vote against MockRepository until then.',
+  );
 
   String get _uid {
     final id = _auth.currentUser?.id;
@@ -152,21 +169,40 @@ class SupabaseRepository implements Repository {
     );
   }
 
-  Message _messageFrom(Map<String, dynamic> row, Map<String, Member> members, String uid) {
-    final authorId = row['user_id'] as String;
-    final mine = authorId == uid;
-    final m = members[authorId];
+  Message _messageFrom(
+    Map<String, dynamic> row,
+    Map<String, Member> members,
+    String uid,
+  ) {
+    // Nullable since 0003_chat: system and venue_vote rows are written by the server and
+    // have no author. Only 'user' rows are guaranteed one, and the database enforces it.
+    final authorId = row['user_id'] as String?;
+    final mine = authorId != null && authorId == uid;
+    final m = authorId == null ? null : members[authorId];
     return Message(
       id: '${row['id']}',
       // 'me' is the sentinel Message.isMine checks; keeping the mock's convention means
       // group_chat_screen.dart needs no change to tell my bubbles from everyone else's.
-      authorId: mine ? 'me' : authorId,
+      authorId: mine ? 'me' : (authorId ?? 'system'),
       authorName: m?.displayName ?? 'Someone',
       avatar: m?.avatar ?? '',
       body: (row['body'] as String?) ?? '',
       sentAt: DateTime.parse(row['created_at'] as String).toLocal(),
+      kind: _kindFrom(row['kind'] as String?),
+      clientMsgId: row['client_msg_id'] as String?,
     );
   }
+
+  /// Unknown kinds degrade to [MessageKind.user] rather than throwing.
+  ///
+  /// The server can start writing a kind this build has never heard of -- a deployed
+  /// phone is not upgraded in step with an edge function. Rendering it as an ordinary
+  /// message is wrong but harmless; throwing takes down the whole chat stream.
+  MessageKind _kindFrom(String? raw) => switch (raw) {
+    'system' => MessageKind.system,
+    'venue_vote' => MessageKind.venueVote,
+    _ => MessageKind.user,
+  };
 
   @override
   Future<Group?> currentGroup() async {
@@ -194,7 +230,15 @@ class SupabaseRepository implements Repository {
       id: 'venue-$groupId',
       name: (venue['name'] as String?) ?? 'Venue to be confirmed',
       address: (venue['address'] as String?) ?? '',
-      pitch: '',
+      // planGroup's venue object is {name, address, why} -- `why` is a line written for
+      // this specific group and is exactly what `pitch` renders. It was being dropped.
+      //
+      // Note what is NOT here: lat/lng. The 0001 comment on groups.venue claims
+      // {name, address, lat, lng}, but GroupPlan never asked Claude for coordinates and
+      // it must not -- a hallucinated pair of floats renders as a confident pin on a map
+      // pointing at nothing. Real coordinates arrive with the Overture corpus in
+      // feat/venue-pipeline, which is why VenueMap degrades to the address until then.
+      pitch: (venue['why'] as String?) ?? '',
       categories: const [],
     );
 
@@ -208,29 +252,152 @@ class SupabaseRepository implements Repository {
     );
   }
 
+  /// Messages this device has sent but not yet seen echoed back, per group.
+  ///
+  /// The optimistic bubble lives here rather than in the widget so that it survives the
+  /// widget rebuilding, and so the merge with the server list happens in one place.
+  final _pending = <String, List<Message>>{};
+
+  /// Lets [sendMessage] re-emit the merged list without owning the stream.
+  final _repaint = <String, void Function()>{};
+
   @override
-  Stream<List<Message>> watchMessages(String groupId) async* {
-    final uid = _uid;
-    final members = await _members(groupId);
-    // The messages table is in the supabase_realtime publication (0001), so this pushes
-    // on every insert. RLS 'read group messages' scopes it to groups the caller is in.
-    yield* _client
-        .from('messages')
-        .stream(primaryKey: ['id'])
-        .eq('group_id', groupId)
-        .order('id', ascending: true)
-        .map((rows) => [for (final r in rows) _messageFrom(r, members, uid)]);
+  Stream<List<Message>> watchMessages(String groupId) {
+    // Hand-rolled controller rather than `async*` + `yield*`, because this stream is the
+    // merge of two sources: the realtime rows, and the local sends that have not come
+    // back yet. A plain yield* can only forward one of them.
+    late final StreamController<List<Message>> out;
+    StreamSubscription<List<Map<String, dynamic>>>? sub;
+    var server = const <Message>[];
+    var cancelled = false;
+
+    void push() {
+      if (out.isClosed) return;
+      // A pending message whose row has arrived is now represented twice. The server copy
+      // is the real one -- it has the authoritative id and timestamp -- so the local one
+      // is dropped. This is the whole reason client_msg_id exists: `id` is a bigserial
+      // the client cannot predict, so there is no other way to recognise your own echo.
+      final echoed = server
+          .map((m) => m.clientMsgId)
+          .whereType<String>()
+          .toSet();
+      _pending[groupId]?.removeWhere((m) => echoed.contains(m.clientMsgId));
+      out.add([...server, ...?_pending[groupId]]);
+    }
+
+    out = StreamController<List<Message>>(
+      // Subscribing in onListen rather than eagerly means the realtime channel is opened
+      // when someone actually watches and closed again on cancel -- the chat screen is
+      // rebuilt constantly, and an eager subscription would outlive the listener.
+      onListen: () async {
+        try {
+          final uid = _uid;
+          final members = await _members(groupId);
+          // The screen can disappear while the roster fetch is in flight. In that order,
+          // onCancel runs before `sub` exists; without this guard the await resumes and
+          // opens a Realtime channel with nobody left to cancel it.
+          if (cancelled || out.isClosed) return;
+          _repaint[groupId] = push;
+          // messages is in the supabase_realtime publication (0001), so this pushes on
+          // every insert. RLS 'read group messages' scopes it to the caller's groups, so
+          // no filtering beyond the group_id is needed -- or possible to get wrong.
+          sub = _client
+              .from('messages')
+              .stream(primaryKey: ['id'])
+              .eq('group_id', groupId)
+              .order('id', ascending: true)
+              .listen((rows) {
+                server = [for (final r in rows) _messageFrom(r, members, uid)];
+                push();
+              }, onError: out.addError);
+        } catch (err, st) {
+          out.addError(err, st);
+        }
+      },
+      onCancel: () async {
+        cancelled = true;
+        _repaint.remove(groupId);
+        await sub?.cancel();
+      },
+    );
+    return out.stream;
   }
 
   @override
   Future<void> sendMessage(String groupId, String body) async {
-    // No optimistic insert: the realtime stream echoes the row back in a beat, and RLS
-    // 'post as self' already forces user_id to the caller.
-    await _client.from('messages').insert({
-      'group_id': groupId,
-      'user_id': _uid,
-      'body': body,
-    });
+    // Optimistic, because the round trip is visible and the demo runs on venue wifi.
+    // Without this the message disappears between tapping send and the echo arriving,
+    // which reads as the app having eaten it.
+    final clientMsgId = _uuidV4();
+    final me = (await _members(groupId))[_uid];
+    final optimistic = Message(
+      id: 'pending-$clientMsgId',
+      authorId: 'me',
+      authorName: me?.displayName ?? 'You',
+      avatar: me?.avatar ?? '',
+      body: body,
+      sentAt: DateTime.now(),
+      clientMsgId: clientMsgId,
+      status: MessageStatus.sending,
+    );
+
+    final queue = _pending.putIfAbsent(groupId, () => <Message>[]);
+    queue.add(optimistic);
+    _repaint[groupId]?.call();
+
+    void mark(MessageStatus status) {
+      final i = queue.indexWhere((m) => m.clientMsgId == clientMsgId);
+      if (i >= 0) queue[i] = queue[i].copyWith(status: status);
+      _repaint[groupId]?.call();
+    }
+
+    try {
+      // RLS 'post as self' pins user_id to the caller; passing it explicitly is what the
+      // policy checks against rather than something it could be tricked by.
+      await _client.from('messages').insert({
+        'group_id': groupId,
+        'user_id': _uid,
+        'body': body,
+        'client_msg_id': clientMsgId,
+      });
+      // Deliberately NOT removed here. The row is committed, but until the echo arrives
+      // this bubble is the only thing on screen representing it -- push() drops it the
+      // moment the real row lands. Marking it sent just retires the spinner.
+      mark(MessageStatus.sent);
+    } catch (_) {
+      // Left in the queue on purpose: a failed message the user can see and retry beats
+      // one that vanishes. client_msg_id makes the retry safe -- the unique constraint
+      // means a send that actually landed cannot be double-posted by trying again.
+      mark(MessageStatus.failed);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> retryMessage(String groupId, Message failed) async {
+    final queue = _pending[groupId];
+    if (queue == null || failed.clientMsgId == null) return;
+    final i = queue.indexWhere((m) => m.clientMsgId == failed.clientMsgId);
+    if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.sending);
+    _repaint[groupId]?.call();
+    try {
+      await _client
+          .from('messages')
+          .upsert(
+            {
+              'group_id': groupId,
+              'user_id': _uid,
+              'body': failed.body,
+              'client_msg_id': failed.clientMsgId,
+            },
+            onConflict: 'client_msg_id',
+            ignoreDuplicates: true,
+          );
+      if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.sent);
+    } catch (_) {
+      if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.failed);
+    }
+    _repaint[groupId]?.call();
   }
 
   @override
@@ -241,7 +408,8 @@ class SupabaseRepository implements Repository {
   Future<String?> myVenueVote(String groupId) async => _notWired('myVenueVote');
 
   @override
-  Future<Map<String, int>> venueTally(String groupId) async => _notWired('venueTally');
+  Future<Map<String, int>> venueTally(String groupId) async =>
+      _notWired('venueTally');
 
   @override
   Future<Assignment> assignment(String groupId) async {
@@ -270,8 +438,41 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitReflection(String groupId, String text,
-      {bool wasFallback = false}) async {
+  Future<void> track(
+    String event, {
+    String? groupId,
+    Map<String, dynamic> props = const {},
+  }) async {
+    try {
+      final response = await _client.functions.invoke(
+        'track',
+        body: {'name': event, 'group_id': ?groupId, 'props': props},
+      );
+      // invoke() returns non-2xx responses as data rather than necessarily throwing. If
+      // we ignore the status, a rejected event looks identical to a written one in debug
+      // and the closing-slide funnel silently stays empty.
+      if (response.status < 200 || response.status >= 300) {
+        throw Exception(
+          'track rejected with ${response.status}: ${response.data}',
+        );
+      }
+    } catch (err) {
+      // Swallowed by contract. An analytics write must never be able to fail the user
+      // action that triggered it -- a dropped funnel row costs us a number on a slide, a
+      // thrown exception costs the user their action.
+      //
+      // Deliberately not retried or queued: the events table is a funnel, not a ledger,
+      // and a queue that survives restarts is more machinery than the question needs.
+      if (kDebugMode) debugPrint('track($event) dropped: $err');
+    }
+  }
+
+  @override
+  Future<void> submitReflection(
+    String groupId,
+    String text, {
+    bool wasFallback = false,
+  }) async {
     // reflections.about_user is NOT NULL. Normally it is your assigned pair. In the
     // fallback case the UI never asks *who* you learned about instead, so we still store
     // the assigned pair and let was_fallback record that the content is really about the
@@ -296,7 +497,10 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) async {
+  Future<void> submitAttendance(
+    String groupId,
+    Map<String, bool> showedUp,
+  ) async {
     if (showedUp.isEmpty) return;
     // One row per (me, subject). CHECK (voter_id <> subject_id) holds because the UI
     // builds this map from "everyone else" -- and _members() gives the current user id
@@ -338,7 +542,8 @@ class SupabaseRepository implements Repository {
     // The reciprocity + invisibility rules live entirely in this function (see
     // 0002_after_meetup.sql): it returns a row only for a pick that went both ways, and
     // nothing here separates "did not pick me" from "was not in the group".
-    final rows = await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
+    final rows =
+        await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
     return [
       for (final r in rows.cast<Map<String, dynamic>>())
         MutualContact(
@@ -349,4 +554,21 @@ class SupabaseRepository implements Repository {
         ),
     ];
   }
+}
+
+/// RFC 4122 version 4, from the platform CSPRNG.
+///
+/// Hand-rolled rather than adding the `uuid` package: this is the only place the app
+/// needs one, and Random.secure() is the same entropy source that package would use.
+/// Version and variant bits are set explicitly because Postgres validates the shape on
+/// the uuid column and a raw 16 random bytes is rejected.
+final _rand = Random.secure();
+
+String _uuidV4() {
+  final b = List<int>.generate(16, (_) => _rand.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 1
+  String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
+  return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-${h(6)}${h(7)}-${h(8)}${h(9)}-'
+      '${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
 }

@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
 import { ch, arr, emit } from '../_shared/clickhouse.ts';
 import { planGroup } from '../_shared/claude.ts';
+import { openChat } from '../_shared/chat.ts';
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
 // stranding five people because a sixth could not be found.
@@ -172,6 +173,22 @@ Deno.serve(async (req) => {
         picked.map((id) => ({ group_id: group!.id, user_id: id, status: 'pending' })),
       );
       if (rErr) throw rErr;
+
+      // Group formation and the chat opening are the same event per the PRD, so this
+      // belongs inside the sweep rather than in a follow-up pass -- there is no moment
+      // where a group exists and its room does not.
+      //
+      // Failure here is caught rather than thrown: the group, its members and its RSVPs
+      // are already committed at this point, and losing the whole sweep over an opening
+      // message would strand everyone matched after this group. An unopened room is
+      // recoverable by calling open-chat; a half-finished sweep is not.
+      try {
+        await openChat(db, group!.id, members.map((m) => ({
+          id: m.id, display_name: m.display_name, tags: m.tags ?? [],
+        })));
+      } catch (chatErr) {
+        console.error(`group ${group!.id} formed but its chat did not open`, chatErr);
+      }
 
       for (const id of picked) unassigned.delete(id);
       await Promise.all(picked.map((id) =>

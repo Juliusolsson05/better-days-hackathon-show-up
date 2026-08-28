@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/notifications.dart';
 import 'core/theme.dart';
 import 'data/mock_repository.dart';
 import 'data/repository.dart';
@@ -39,14 +42,20 @@ class _ShowUpAppState extends State<ShowUpApp> {
         : Phase.onboarding;
   }
 
+  StreamSubscription<NotificationTap>? _tapSub;
+
   @override
   void initState() {
     super.initState();
     _repo.signIn();
+    // Subscribed here rather than per-screen because a tap can arrive in any phase,
+    // including a cold start where no screen has been built yet.
+    _tapSub = NotificationService.instance.taps.listen(_state.handleNotificationTap);
   }
 
   @override
   void dispose() {
+    _tapSub?.cancel();
     final repo = _repo;
     if (repo is MockRepository) repo.dispose();
     super.dispose();
@@ -60,7 +69,14 @@ class _ShowUpAppState extends State<ShowUpApp> {
       theme: buildTheme(),
       home: ListenableBuilder(
         listenable: _state,
-        builder: (context, _) => Stack(children: [
+        // Tap anywhere to dismiss the keyboard. Two fields in this app are multiline
+        // (the passion answer and the post-meetup reflection), so Return inserts a
+        // newline and there is otherwise NO way to close the keyboard once it is open.
+        // translucent so the gesture does not swallow taps meant for the widgets below.
+        builder: (context, _) => GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: Stack(children: [
           switch (_state.phase) {
             Phase.auth       => AuthScreen(_state),
             Phase.onboarding => OnboardingScreen(_state),
@@ -70,8 +86,10 @@ class _ShowUpAppState extends State<ShowUpApp> {
             Phase.after      => AfterFlow(_state),
             Phase.contacts   => ContactsScreen(_state),
           },
-          _DevJump(_state),
-        ]),
+            _DevJump(_state),
+            _DevLadder(_state),
+          ]),
+        ),
       ),
     );
   }
@@ -114,6 +132,51 @@ class _DevJump extends StatelessWidget {
             PopupMenuItem(value: Phase.after,      child: Text('4 · After the meetup')),
             PopupMenuItem(value: Phase.contacts,   child: Text('5 · Numbers')),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// Fires the whole ladder compressed into ~40 seconds.
+///
+/// Demo infrastructure like [_DevJump]: the real ladder's first rung is three days before
+/// the event, so there is no way to show the notification system -- the part of this
+/// product that carries the story -- without compressing it. Gate on kDebugMode before
+/// this ships.
+class _DevLadder extends StatelessWidget {
+  final AppState state;
+  const _DevLadder(this.state);
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 8,
+      bottom: 140,
+      child: SafeArea(
+        child: IconButton(
+          tooltip: 'Fire the ladder (compressed)',
+          icon: const CircleAvatar(
+            radius: 18, backgroundColor: Colors.white12,
+            child: Icon(Icons.notifications_active_outlined,
+                size: 18, color: Colors.white54),
+          ),
+          onPressed: () async {
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            if (state.group == null) {
+              messenger?.showSnackBar(const SnackBar(
+                content: Text('Enter a group first — the ladder schedules from it.')));
+              return;
+            }
+            await state.armLadder(demo: true);
+            final pending = await NotificationService.instance.pending();
+            messenger?.showSnackBar(SnackBar(
+              content: Text(state.notificationsEnabled == true
+                  ? '${pending.length} rungs armed — background the app to see them'
+                  : 'Notifications denied — enable them in Settings'),
+            ));
+          },
         ),
       ),
     );

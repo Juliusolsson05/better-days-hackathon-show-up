@@ -3,6 +3,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
+import 'core/notifications.dart';
 
 /// DSN is passed at build time rather than committed. A Sentry DSN is not a secret in the
 /// API-key sense -- it only permits writing events -- but keeping it out of the repo means
@@ -46,6 +47,9 @@ Future<void> main() async {
 /// the Sentry and no-Sentry paths so the swap behaves the same either way.
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before runApp so a tap that cold-started the app is already queued when the shell
+  // subscribes. Deliberately does NOT prompt for permission -- see NotificationService.
+  await NotificationService.instance.init();
   if (_useSupabase) {
     assert(
       _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,

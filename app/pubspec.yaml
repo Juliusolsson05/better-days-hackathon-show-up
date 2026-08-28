@@ -39,6 +39,7 @@ dependencies:
   intl: ^0.20.3
   image_picker: ^1.1.2
   sentry_flutter: ^9.28.0
+  timezone: ^0.11.1
 
 dev_dependencies:
   flutter_test:

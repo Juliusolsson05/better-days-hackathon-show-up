@@ -13,39 +13,67 @@ class QuestionSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final a = state.assignment;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 36, height: 4,
-          decoration: BoxDecoration(
-            color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-        ),
-        const SizedBox(height: 24),
-        const Text('Just for you',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
-        Text('Nobody else can see this, and everyone has one.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                fontSize: 13, color: Colors.white.withValues(alpha: 0.55))),
-        const SizedBox(height: 24),
-        if (a == null)
-          const CircularProgressIndicator()
-        else ...[
+      padding: const EdgeInsets.fromLTRB(24, 14, 24, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Container(
-            padding: const EdgeInsets.all(18),
+            width: 36,
+            height: 4,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: accent.withValues(alpha: 0.4)),
+              color: line,
+              borderRadius: BorderRadius.circular(2),
             ),
-            child: Text(a.question,
-                style: const TextStyle(fontSize: 16, height: 1.45)),
           ),
-          const SizedBox(height: 20),
-          Text('Your person is ${a.targetName}.',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          const SizedBox(height: 28),
+          Text(
+            'Just for you',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Nobody else can see this, and everyone has one.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 24),
+          if (a == null)
+            Container(
+              height: 92,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(cardRadius),
+              ),
+            )
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: accentPale,
+                borderRadius: BorderRadius.circular(cardRadius),
+              ),
+              child: Text(
+                a.question,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 18,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Your person is ${a.targetName}.',
+              style: const TextStyle(
+                color: inkDeep,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 }

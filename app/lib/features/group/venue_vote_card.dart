@@ -31,7 +31,12 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
     final g = widget.state.group!;
     final vote = await widget.state.repo.myVenueVote(g.id);
     final tally = await widget.state.repo.venueTally(g.id);
-    if (mounted) setState(() { _myVote = vote; _tally = tally; _loading = false; });
+    if (mounted)
+      setState(() {
+        _myVote = vote;
+        _tally = tally;
+        _loading = false;
+      });
   }
 
   Future<void> _vote(String optionId) async {
@@ -43,36 +48,65 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
   @override
   Widget build(BuildContext context) {
     final g = widget.state.group!;
-    final total = _tally.values.fold<int>(0, (a, b) => a + b);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: surface, borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        color: surface,
+        borderRadius: BorderRadius.circular(cardRadius),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.how_to_vote_outlined, size: 18, color: accent),
-          const SizedBox(width: 8),
-          const Text('Where should you go?',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-        ]),
-        const SizedBox(height: 4),
-        Text('Anonymous — nobody sees who picked what.',
-            style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.5))),
-        const SizedBox(height: 14),
-        if (_loading)
-          const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator())
-        else
-          for (final v in g.venueOptions) _option(v, _tally[v.id] ?? 0, total),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.how_to_vote_outlined,
+                  size: 19,
+                  color: inkDeep,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Where should you go?',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Anonymous. Nobody sees who picked what.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          if (_loading)
+            for (var i = 0; i < 2; i++)
+              Container(
+                height: 72,
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(inputRadius),
+                ),
+              )
+          else
+            for (final v in g.venueOptions) _option(v, _tally[v.id] ?? 0),
+        ],
+      ),
     );
   }
 
-  Widget _option(VenueOption v, int votes, int total) {
+  Widget _option(VenueOption v, int votes) {
     final mine = _myVote == v.id;
-    final share = total == 0 ? 0.0 : votes / total;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
@@ -81,33 +115,54 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            color: mine ? accentPale : bg,
+            borderRadius: BorderRadius.circular(inputRadius),
             border: Border.all(
-              color: mine ? accent : Colors.white.withValues(alpha: 0.12),
-              width: mine ? 1.5 : 1),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(child: Text(v.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600))),
-              Text('$votes',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-            ]),
-            const SizedBox(height: 4),
-            Text(v.pitch,
-                style: TextStyle(
-                    fontSize: 13, height: 1.35,
-                    color: Colors.white.withValues(alpha: 0.65))),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: share, minHeight: 4,
-                backgroundColor: Colors.white.withValues(alpha: 0.08),
-                valueColor: AlwaysStoppedAnimation(mine ? accent : Colors.white24),
-              ),
+              color: mine ? inkDeep : Colors.transparent,
+              width: mine ? 1.5 : 1,
             ),
-          ]),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      v.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mine ? accent : surface,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$votes',
+                      style: const TextStyle(
+                        color: ink,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                v.pitch,
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  color: bodyInk,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

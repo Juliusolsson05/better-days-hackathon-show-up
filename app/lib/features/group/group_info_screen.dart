@@ -18,57 +18,105 @@ class GroupInfoScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Group')),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-                color: surface, borderRadius: BorderRadius.circular(16)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                const Icon(Icons.place_outlined, size: 18, color: accent),
-                const SizedBox(width: 8),
-                Text(venue.name,
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                if (g.chosenVenueId == null) ...[
-                  const Spacer(),
-                  Text('voting open',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white.withValues(alpha: 0.45))),
-                ],
-              ]),
-              const SizedBox(height: 6),
-              Text(venue.address,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-              const SizedBox(height: 14),
-              VenueMap(venue),
-            ]),
+              color: surface,
+              borderRadius: BorderRadius.circular(cardRadius),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.place_outlined, size: 20, color: inkDeep),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        venue.name,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    if (g.chosenVenueId == null) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accentPale,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text(
+                          'Voting open',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: inkDeep,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  venue.address,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                VenueMap(venue),
+              ],
+            ),
           ),
-          const SizedBox(height: 24),
-          Text('${g.members.length} people',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 28),
+          Text(
+            '${g.members.length} people',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 12),
-          for (final m in g.members) _member(m),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(cardRadius),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < g.members.length; i++) ...[
+                  _member(context, g.members[i]),
+                  if (i != g.members.length - 1) const Divider(),
+                ],
+              ],
+            ),
+          ),
           const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _member(Member m) => Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: Row(children: [
-          Avatar(m.avatar),
-          const SizedBox(width: 12),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(m.displayName,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
+  Widget _member(BuildContext context, Member m) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Row(
+      children: [
+        Avatar(m.avatar),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(m.displayName, style: Theme.of(context).textTheme.titleMedium),
             if (m.tags.isNotEmpty)
-              Text(m.tags.join(' · '),
-                  style: TextStyle(
-                      fontSize: 12, color: Colors.white.withValues(alpha: 0.5))),
-          ]),
-        ]),
-      );
+              Text(
+                m.tags.join(', '),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
 }

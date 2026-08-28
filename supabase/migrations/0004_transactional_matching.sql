@@ -117,4 +117,3 @@ revoke all on function public.create_matched_group(timestamptz, jsonb, text, rea
     from authenticated;
 grant execute on function public.create_matched_group(timestamptz, jsonb, text, real, jsonb)
     to service_role;
-

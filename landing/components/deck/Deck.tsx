@@ -55,9 +55,16 @@ export function Deck({ children }: { children: React.ReactNode }) {
 export function Slide({
   children,
   className = '',
+  contentClassName,
 }: {
   children: React.ReactNode;
   className?: string;
+  /**
+   * Replaces the default max-w-5xl on the inner stage, rather than appending to it.
+   * Two-column product slides need the extra width; stacking both max-width utilities
+   * would let the stylesheet order win, not the class string, and silently stay narrow.
+   */
+  contentClassName?: string;
 }) {
   return (
     <SpectacleSlide
@@ -66,7 +73,9 @@ export function Slide({
       padding="64px 80px"
       className={className}
     >
-      <div className="mx-auto flex h-full w-full max-w-5xl flex-col justify-center">
+      <div
+        className={`mx-auto flex h-full w-full flex-col justify-center ${contentClassName ?? 'max-w-5xl'}`}
+      >
         {children}
       </div>
     </SpectacleSlide>

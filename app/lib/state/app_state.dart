@@ -6,14 +6,25 @@ import '../models/models.dart';
 /// ChangeNotifier rather than a state-management package: one less dependency, and the
 /// app has exactly one piece of global state -- where you are in the flow.
 class AppState extends ChangeNotifier {
-  AppState(this.repo);
+  AppState(this.repo, {Phase initialPhase = Phase.onboarding}) : phase = initialPhase;
   final Repository repo;
 
-  Phase phase = Phase.onboarding;
+  Phase phase;
   Profile? me;
   Group? group;
   Assignment? assignment;
   List<MutualContact> contacts = const [];
+
+  /// Email OTP, step one. Throws on failure so the auth screen can surface it.
+  Future<void> sendEmailOtp(String email) => repo.sendEmailOtp(email);
+
+  /// Email OTP, step two. On success we land in onboarding -- a signed-in user without
+  /// a profile is exactly the signup case.
+  Future<void> verifyEmailOtp(String email, String token) async {
+    await repo.verifyEmailOtp(email, token);
+    phase = Phase.onboarding;
+    notifyListeners();
+  }
 
   Future<void> completeOnboarding(Profile p) async {
     me = p;

@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Show Up uses a photo you pick so your group sees a person, not a name. Choose anything but your face.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Show Up can use the camera to take the photo your group sees.</string>
 </dict>
 </plist>

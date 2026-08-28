@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/theme.dart';
 import 'data/mock_repository.dart';
+import 'data/repository.dart';
+import 'data/supabase_repository.dart';
 import 'models/models.dart';
 import 'state/app_state.dart';
 import 'features/after/after_flow.dart';
 import 'features/after/contacts_screen.dart';
 import 'features/group/group_chat_screen.dart';
+import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
 
@@ -17,8 +21,23 @@ class ShowUpApp extends StatefulWidget {
 }
 
 class _ShowUpAppState extends State<ShowUpApp> {
-  final _repo = MockRepository();
-  late final AppState _state = AppState(_repo);
+  /// --dart-define=USE_SUPABASE=true swaps the mock for the real backend. Main() only
+  /// calls Supabase.initialize under the same flag, so MockRepository stays the default
+  /// and needs no cloud project.
+  static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
+
+  late final Repository _repo =
+      _useSupabase ? SupabaseRepository(Supabase.instance.client) : MockRepository();
+  late final AppState _state = AppState(_repo, initialPhase: _initialPhase());
+
+  Phase _initialPhase() {
+    if (!_useSupabase) return Phase.onboarding;
+    // A restored session means the user is past auth; a signed-in user with no profile
+    // yet is precisely the onboarding case.
+    return Supabase.instance.client.auth.currentSession == null
+        ? Phase.auth
+        : Phase.onboarding;
+  }
 
   @override
   void initState() {
@@ -28,7 +47,8 @@ class _ShowUpAppState extends State<ShowUpApp> {
 
   @override
   void dispose() {
-    _repo.dispose();
+    final repo = _repo;
+    if (repo is MockRepository) repo.dispose();
     super.dispose();
   }
 
@@ -42,6 +62,7 @@ class _ShowUpAppState extends State<ShowUpApp> {
         listenable: _state,
         builder: (context, _) => Stack(children: [
           switch (_state.phase) {
+            Phase.auth       => AuthScreen(_state),
             Phase.onboarding => OnboardingScreen(_state),
             Phase.waiting    => WaitingScreen(_state),
             Phase.matched ||

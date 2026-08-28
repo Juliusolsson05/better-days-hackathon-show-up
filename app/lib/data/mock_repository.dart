@@ -50,6 +50,15 @@ class MockRepository implements Repository {
   Future<void> signIn() => Future.delayed(_lag);
 
   @override
+  Future<bool> isSignedIn() async => true;
+
+  @override
+  Future<void> sendEmailOtp(String email) => Future.delayed(_lag);
+
+  @override
+  Future<void> verifyEmailOtp(String email, String token) => Future.delayed(_lag);
+
+  @override
   Future<Profile> submitProfile({
     required String displayName,
     required String avatar,
@@ -57,6 +66,7 @@ class MockRepository implements Repository {
     required List<String> tags,
     required String city,
     required List<String> availability,
+    String? photoPath,
   }) async {
     await Future.delayed(_lag);
     return _me = Profile(

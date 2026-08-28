@@ -1,30 +1,43 @@
+import Image from 'next/image';
+
 /**
- * "Coming soon" markers for the two app stores.
+ * Official store artwork, downloaded unmodified from Apple Developer and Google Play.
  *
- * Deliberately NOT the official App Store / Google Play badges. Both are trademarked
- * artwork that Apple and Google require you to use unmodified and from their own asset
- * kits, and a hand-drawn approximation of either logo is a worse outcome than no logo at
- * all -- it looks off to anyone who knows the real one, and it is the kind of thing that
- * gets a listing rejected. Swap these for the real badges from Apple's Marketing Resources
- * and Google's Play Badge generator once the apps are actually listed.
+ * The two source files have different intrinsic canvas proportions: Google's PNG includes
+ * transparent clear space around the badge while Apple's SVG does not. Giving Google a
+ * wider image box makes the visible black badges land at the same height without cropping
+ * or altering either asset -- both vendors explicitly prohibit modifying their artwork.
  *
- * Rendered as spans rather than anchors or buttons: there is nowhere to go yet. A disabled
- * button invites a click that does nothing, and a link to a store page that does not exist
- * is worse. This states availability, so it is text.
+ * These remain non-interactive until real product-page URLs exist. Shipping a dead link is
+ * worse than honest status text, but the official guidelines require badges to link to the
+ * store listing, so the domain should not go live in this state. Once listings exist, wrap
+ * each image in its store URL and remove the shared "Coming soon" label.
  */
 export function StoreBadges() {
   return (
-    <ul className="flex flex-wrap gap-3">
-      {['App Store', 'Google Play'].map((store) => (
-        <li key={store}>
-          <span className="flex flex-col rounded-3xl bg-canvas px-6 py-3">
-            <span className="text-xs font-semibold text-muted">
-              Coming soon
-            </span>
-            <span className="text-base font-semibold text-ink">{store}</span>
-          </span>
+    <div aria-label="Show Up is coming soon to the App Store and Google Play">
+      <p className="mb-3 text-sm font-semibold text-body">Coming soon on</p>
+      <ul className="flex flex-wrap items-center gap-3">
+        {/* Apple asks to appear first when badges for multiple platforms share a row. */}
+        <li className="flex h-12 items-center">
+          <Image
+            src="/store-badges/app-store.svg"
+            alt="Download on the App Store"
+            width={144}
+            height={48}
+            priority
+          />
         </li>
-      ))}
-    </ul>
+        <li className="flex h-12 items-center">
+          <Image
+            src="/store-badges/google-play.png"
+            alt="Get it on Google Play"
+            width={162}
+            height={63}
+            priority
+          />
+        </li>
+      </ul>
+    </div>
   );
 }

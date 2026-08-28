@@ -244,9 +244,10 @@ grant execute on function public.form_group(timestamptz, jsonb, text, real, json
 -- Chat kinds and grounded venue options
 -- -----------------------------------------------------------------------------
 
--- The chat-hardening worktree owns the richer message protocol and may already have created
--- these columns/constraints as 0002_chat.sql. Keeping this migration composable is what lets
--- database/privacy work proceed in parallel without whichever migration lands second failing.
+-- Product contracts own the shared kind/author invariant. Chat hardening follows as 0004 and
+-- may add delivery metadata such as client_msg_id, but it must not redefine which messages are
+-- allowed to impersonate a user. Keeping that ownership here prevents edge-generated system
+-- rows and app-authored rows from drifting into incompatible shapes.
 alter table public.messages add column if not exists kind text not null default 'user';
 alter table public.messages alter column user_id drop not null;
 do $$ begin

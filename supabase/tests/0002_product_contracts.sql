@@ -121,6 +121,25 @@ begin
         raise exception 'form_group did not persist a complete assignment derangement';
     end if;
 
+    -- Product contracts own message authorship even though chat delivery evolves separately.
+    -- Edge-authored system rows must be anonymous; app-authored user rows must be attributable.
+    insert into public.messages (group_id, user_id, body, kind)
+    values (g1, null, 'Group created', 'system');
+    begin
+        insert into public.messages (group_id, user_id, body, kind)
+        values (g1, null, 'Anonymous user message', 'user');
+        raise exception 'user message without an author unexpectedly succeeded';
+    exception when check_violation then
+        null;
+    end;
+    begin
+        insert into public.messages (group_id, user_id, body, kind)
+        values (g1, user_ids[1], 'Impersonated system message', 'system');
+        raise exception 'system message with a user author unexpectedly succeeded';
+    exception when check_violation then
+        null;
+    end;
+
     perform public.replace_venue_options(g1, '[
       {"position":1,"venue_id":"one-a","name":"One A","kind":"cafe",
        "address":"1 A St","locality":"SF","lat":37.7,"lng":-122.4,
@@ -137,6 +156,21 @@ begin
        "address":"2 B St","locality":"SF","lat":37.8,"lng":-122.3,
        "pitch":"B","score":0.7,"per_member":[0.7,0.6]}
     ]'::jsonb);
+
+    -- Retrieval jobs are retried independently from chat. The database owns the single anchor,
+    -- so replaying persistence before voting may refresh options but must not duplicate the card.
+    perform public.replace_venue_options(g2, '[
+      {"position":1,"venue_id":"two-a","name":"Two A","kind":"bar",
+       "address":"2 A St","locality":"SF","lat":37.7,"lng":-122.4,
+       "pitch":"A","score":0.8,"per_member":[0.8,0.7]},
+      {"position":2,"venue_id":"two-b","name":"Two B","kind":"museum",
+       "address":"2 B St","locality":"SF","lat":37.8,"lng":-122.3,
+       "pitch":"B","score":0.7,"per_member":[0.7,0.6]}
+    ]'::jsonb);
+    if (select count(*) from public.messages
+        where group_id = g2 and kind = 'venue_vote') <> 1 then
+        raise exception 'retrying venue persistence duplicated the chat vote anchor';
+    end if;
 
     if (select venue_status from public.groups where id = g1) <> 'voting' then
         raise exception 'persisted venue options did not open the vote';

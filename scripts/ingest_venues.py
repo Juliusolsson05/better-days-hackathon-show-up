@@ -42,44 +42,76 @@ S3_PLACES = (
 # dataset.
 BBOX = (-122.52, -122.35, 37.70, 37.83)  # xmin, xmax, ymin, ymax
 
-# Somewhere six strangers could plausibly spend an evening.
+# --- Is this somewhere six strangers could spend an evening? ---------------------------
 #
-# This is an EXACT allowlist, read off the real taxonomy, not a substring match. Substring
-# matching was tried first and was wrong in both directions: "garden" admitted
-# nursery_and_gardening_store, "gym" admitted every Bushido Fitness Center, "dance" admitted
-# a children's ballet academy, while performing_arts_venue and social_club were missed
-# entirely. The corpus is overwhelmingly not social -- of ~37k open SF places the largest
-# categories are health_care, hair_salon and doctors_office -- so precision matters more
-# than recall here.
-SOCIAL_TAXONOMIES = frozenset({
-    # drink
-    "bar", "cocktail_bar", "wine_bar", "sports_bar", "gay_bar", "dive_bar", "beer_bar",
-    "tapas_bar", "pub", "irish_pub", "gastropub", "brewery", "brewpub", "taproom",
-    "winery", "distillery", "lounge", "speakeasy",
-    # coffee and sweet
-    "coffee_shop", "cafe", "tea_room", "bubble_tea_shop", "ice_cream_shop", "dessert_shop",
-    "bakery", "creamery", "juice_bar",
-    # eat (the cuisine family is handled by the _restaurant suffix rule below)
-    "restaurant", "sandwich_shop", "delicatessen", "food_hall", "steakhouse", "diner",
-    # do
-    "music_venue", "theatre_venue", "performing_arts_venue", "comedy_club", "movie_theater",
-    "cinema", "dance_club", "night_club", "karaoke_bar", "arcade", "bowling_alley",
-    "billiards", "escape_room", "mini_golf", "climbing_gym", "bouldering_gym",
-    "pottery_studio", "board_game_cafe",
-    # look
-    "art_gallery", "museum", "art_museum", "history_museum", "science_museum", "aquarium",
-    "zoo", "botanical_garden", "bookstore",
-    # outdoors and gather
-    "park", "public_plaza", "beach", "social_club", "event_venue",
+# Classified on Overture's taxonomy TREE, not on a hand-written list of leaf labels.
+#
+# Three earlier attempts hand-curated leaves and each one was wrong, because the SF slice has
+# 1,231 distinct leaves and no human reads them all: substrings admitted a gardening store and
+# a children's ballet academy while missing performing_arts_venue; the exact list that
+# replaced it invented "climbing_gym", so every real climbing gym in the city was absent from
+# a corpus later asked to find somewhere for climbers. The actual label is rock_climbing_spot.
+#
+# The tree has 14 roots. Deciding at the root is exhaustive by construction -- no leaf can be
+# overlooked -- reviewable, and stable: leaves added in a future Overture release inherit the
+# right answer automatically instead of silently falling out of the corpus.
+#
+# Counts below are from the SF slice at release 2026-08-19.0, via /tmp/taxonomy_tree.csv.
+SOCIAL_ROOTS = frozenset({
+    "food_and_drink",          # 7,381 - restaurants, bars, cafes. Social almost by definition.
+    "arts_and_entertainment",  # 1,214 - galleries, music venues, cinemas, arcades.
+    "sports_and_recreation",   # 1,326 - parks, climbing, bowling. Also gyms; see below.
+    "cultural_and_historic",   # 1,073 - museums and cultural centres. Mostly worship; see below.
+    "geographic_entities",     #    95 - beaches, piers, botanical gardens.
+})
+
+# Leaves inside a social root that are still not a place to send six strangers. Each of these
+# was read off the real vocabulary rather than imagined.
+EXCLUDED_LEAVES = frozenset({
+    # Not an evening out.
+    "fast_food_restaurant",
+    # Classes and training: you attend these alone, on a schedule, and they are not a
+    # conversation. This is the whole reason `gym` cannot be admitted wholesale -- 252 of them.
+    "gym", "boxing_gym", "yoga_studio", "pilates_studio", "dance_studio", "martial_arts_club",
+    "gymnastics_center", "boot_camp", "boxing_class", "cycling_class", "barre_class",
+    "qi_gong_studio", "fitness_trainer", "swimming_instructor", "swimming_lessons",
+    # Membership clubs and teams -- you cannot simply turn up.
+    "amateur_sport_team", "soccer_club", "fishing_club", "lawn_bowling_club", "fencing_club",
+    "table_tennis_club", "sport_or_recreation_club", "choir", "veterans_organization",
+    "fraternal_organization",
+    # Venues that need a ticketed event to mean anything.
+    "stadium_arena", "baseball_stadium", "soccer_stadium", "football_stadium",
+    "tennis_stadium", "fairgrounds", "auditorium", "ticket_office_or_booth",
+    # For children.
+    "playground", "petting_zoo", "childrens_museum",
+    # Services that happen to sit under an entertainment root.
+    "psychic_advising", "astrological_advising", "lottery_vendor",
+    # Adult venues and gambling: wrong setting for strangers matched by an algorithm.
+    "adult_entertainment_venue", "strip_club", "casino", "bingo_hall", "shooting_range",
+    # Places of worship. Excluded as a class, not a judgement: a religious setting is not
+    # neutral ground for six people matched on hobbies, and stance is exactly what the
+    # embedding cannot see.
+    "christian_place_of_worship", "baptist_place_of_worship", "roman_catholic_place_of_worship",
+    "buddhist_place_of_worship", "jewish_place_of_worship", "pentecostal_place_of_worship",
+    "muslim_place_of_worship", "hindu_place_of_worship", "mormon_place_of_worship",
+    "place_of_worship", "religious_organization", "religious_school",
+    # Landmarks you look at rather than spend time in. historic_site alone is 429 rows in SF,
+    # overwhelmingly plaques and facades, and would dominate the corpus.
+    "historic_site", "monument", "sculpture_statue", "street_art", "bridge",
+    # Dog parks are for dogs.
+    "dog_park",
 })
 
 
-def is_social(taxonomy: str | None, basic: str | None) -> bool:
-    """Exact match, plus a suffix rule so every cuisine (sushi_, thai_, ...) is covered."""
-    label = (taxonomy or basic or "").lower()
-    if not label:
+def is_social(hierarchy_root: str | None, taxonomy: str | None) -> bool:
+    """Root decides inclusion; a leaf can only opt out, never opt in.
+
+    Places with no taxonomy at all (~732 in SF) are dropped: with neither a root nor a leaf
+    there is nothing to classify on, and guessing from the name is how this went wrong before.
+    """
+    if not hierarchy_root or hierarchy_root not in SOCIAL_ROOTS:
         return False
-    return label in SOCIAL_TAXONOMIES or label.endswith("_restaurant")
+    return (taxonomy or "") not in EXCLUDED_LEAVES
 
 
 def extract():
@@ -94,6 +126,9 @@ def extract():
             id                        AS venue_id,
             names.primary             AS name,
             taxonomy.primary          AS taxonomy_primary,
+            -- The root of the taxonomy tree. This, not the leaf, decides whether a place is
+            -- somewhere a group could meet -- see is_social().
+            taxonomy.hierarchy[1]     AS taxonomy_root,
             basic_category,
             -- POI bboxes are degenerate (xmin == xmax), so bbox doubles as the point and we
             -- avoid needing the spatial extension just to unpack a geometry blob.
@@ -114,7 +149,7 @@ def extract():
         """
     ).fetchall()
     cols = [
-        "venue_id", "name", "taxonomy_primary", "basic_category",
+        "venue_id", "name", "taxonomy_primary", "taxonomy_root", "basic_category",
         "lng", "lat", "confidence", "address", "locality",
     ]
     out = [dict(zip(cols, r)) for r in rows]
@@ -213,7 +248,7 @@ def ch(sql, body=None):
 
 def main():
     venues = extract()
-    social = [v for v in venues if is_social(v["taxonomy_primary"], v["basic_category"])]
+    social = [v for v in venues if is_social(v["taxonomy_root"], v["taxonomy_primary"])]
     print(f"  {len(social)} social venues", file=sys.stderr)
     if not social:
         raise SystemExit("no social venues matched -- read the taxonomy before filtering it")

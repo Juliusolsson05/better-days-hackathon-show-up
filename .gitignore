@@ -13,3 +13,6 @@ supabase/.temp
 .vscode/
 
 .env.functions
+
+# Agent worktrees are checkouts of this repo, not content of it
+.claude/

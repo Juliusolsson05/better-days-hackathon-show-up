@@ -29,7 +29,17 @@ DEVICE="${1:-$(flutter devices --machine 2>/dev/null \
   | python3 -c "import json,sys; d=[x for x in json.load(sys.stdin) if x.get('targetPlatform','').startswith('ios') and not x.get('emulator')]; print(d[0]['id'] if d else '')")}"
 [[ -n "$DEVICE" ]] || { echo "no physical iOS device found — is it plugged in and unlocked?"; exit 1; }
 
+# A locked phone fails at INSTALL, and flutter reports it as the generic
+# "Could not run build/ios/iphoneos/Runner.app", which sends you hunting through
+# signing and provisioning for a problem that is solved by tapping the screen.
+if xcrun devicectl device info lockState --device "$DEVICE" 2>/dev/null | grep -qi "locked: *true\|passcodeRequired"; then
+  echo "the iPhone is locked — unlock it and keep it awake, then re-run"
+  exit 1
+fi
+
 echo "→ release build to $DEVICE"
+# .env lives at the repo root, the Flutter project one level down in app/.
+cd app
 exec flutter run --release -d "$DEVICE" \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \

@@ -235,6 +235,7 @@ Deno.serve(async (req) => {
       groups: formed.length,
       unmatched: unassigned.size,
       skipped: skipped.length,
+      venue_existing: ready.size,
       venue_ready: venueReady,
       venue_failures: venueFailures,
       stats: lastStats,

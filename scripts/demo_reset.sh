@@ -9,9 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env
 
-echo "→ clearing groups, memberships, rsvps, reflections, shares"
+echo "→ clearing group-owned demo state"
 psql "$SUPABASE_DB_URL" -q <<'SQL'
-truncate number_shares, reflections, rsvps, group_members, messages restart identity cascade;
+-- groups is the ownership root: every membership, RSVP, message, reflection, attendance
+-- ballot, contact choice, venue option, venue vote, and winner cascades from it. Naming the
+-- old leaf tables here made the reset fail as soon as 0002 dropped number_shares, and would
+-- require another edit for every future group-owned feature.
 delete from groups;
 SQL
 

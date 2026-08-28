@@ -456,10 +456,17 @@ async function runSweep() {
       out.textContent = `Empty pool — no embedded profiles in ${city} / ${slot} yet. Sign some up.`;
       return;
     }
-    out.className = "out ok";
+    const venueFailures = body.venue_failures || [];
+    const readyBallots = (body.venue_existing || 0) + (body.venue_ready || 0);
+    out.className = venueFailures.length ? "out bad" : "out ok";
     out.textContent =
       `Formed ${body.groups} group${body.groups === 1 ? "" : "s"} · ` +
-      `${body.unmatched} unmatched · ${body.skipped} skipped.`;
+      `${body.unmatched} unmatched · ${body.skipped} skipped · ` +
+      `${readyBallots} venue ballot${readyBallots === 1 ? "" : "s"} ready.` +
+      (venueFailures.length
+        ? ` ${venueFailures.length} venue job${venueFailures.length === 1 ? "" : "s"} failed: ` +
+          venueFailures.map((v) => v.group_id).join(", ")
+        : "");
     // The sweep just emitted group_formed events; pull the funnel forward now rather than
     // waiting up to 15s for the next poll.
     load();

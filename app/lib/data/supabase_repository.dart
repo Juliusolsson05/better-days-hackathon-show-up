@@ -42,7 +42,11 @@ class SupabaseRepository implements Repository {
 
   @override
   Future<void> verifyEmailOtp(String email, String token) async {
-    await _auth.verifyOTP(type: OtpType.email, email: email, token: token.trim());
+    await _auth.verifyOTP(
+      type: OtpType.email,
+      email: email,
+      token: token.trim(),
+    );
   }
 
   @override
@@ -60,19 +64,24 @@ class SupabaseRepository implements Repository {
       throw StateError('submitProfile called without a session');
     }
 
-    final photoUrl = photoPath == null ? null : await _uploadPhoto(uid, photoPath);
+    final photoUrl = photoPath == null
+        ? null
+        : await _uploadPhoto(uid, photoPath);
 
     // The function holds the ClickHouse and LLM secrets and does the embed + tag
     // extraction; it also upserts the profiles row, so the client never writes it
     // directly. supabase_flutter attaches the session JWT automatically.
-    final res = await _client.functions.invoke('submit-profile', body: {
-      'display_name': displayName,
-      'passion': passion,
-      'tags': tags,
-      'city': city,
-      'availability': availability,
-      'photo_url': ?photoUrl,
-    });
+    final res = await _client.functions.invoke(
+      'submit-profile',
+      body: {
+        'display_name': displayName,
+        'passion': passion,
+        'tags': tags,
+        'city': city,
+        'availability': availability,
+        'photo_url': ?photoUrl,
+      },
+    );
 
     if (res.status != 200) {
       final detail = res.data is Map ? res.data['error'] : res.data;
@@ -96,19 +105,24 @@ class SupabaseRepository implements Repository {
   Future<String> _uploadPhoto(String uid, String path) async {
     final bytes = await File(path).readAsBytes();
     final objectPath = '$uid/profile.jpg';
-    await _client.storage.from(_photoBucket).uploadBinary(
+    await _client.storage
+        .from(_photoBucket)
+        .uploadBinary(
           objectPath,
           bytes,
-          fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+          fileOptions: const FileOptions(
+            contentType: 'image/jpeg',
+            upsert: true,
+          ),
         );
     return _client.storage.from(_photoBucket).getPublicUrl(objectPath);
   }
 
   Never _notWired(String method) => throw UnimplementedError(
-        'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
-        'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
-        'Run the venue vote against MockRepository until then.',
-      );
+    'SupabaseRepository.$method is not wired yet -- venue voting needs the venue '
+    'tables (still in the draft) and the retrieval pipeline on feat/venue-pipeline. '
+    'Run the venue vote against MockRepository until then.',
+  );
 
   String get _uid {
     final id = _auth.currentUser?.id;
@@ -152,7 +166,11 @@ class SupabaseRepository implements Repository {
     );
   }
 
-  Message _messageFrom(Map<String, dynamic> row, Map<String, Member> members, String uid) {
+  Message _messageFrom(
+    Map<String, dynamic> row,
+    Map<String, Member> members,
+    String uid,
+  ) {
     final authorId = row['user_id'] as String;
     final mine = authorId == uid;
     final m = members[authorId];
@@ -241,7 +259,8 @@ class SupabaseRepository implements Repository {
   Future<String?> myVenueVote(String groupId) async => _notWired('myVenueVote');
 
   @override
-  Future<Map<String, int>> venueTally(String groupId) async => _notWired('venueTally');
+  Future<Map<String, int>> venueTally(String groupId) async =>
+      _notWired('venueTally');
 
   @override
   Future<Assignment> assignment(String groupId) async {
@@ -270,8 +289,11 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitReflection(String groupId, String text,
-      {bool wasFallback = false}) async {
+  Future<void> submitReflection(
+    String groupId,
+    String text, {
+    bool wasFallback = false,
+  }) async {
     // reflections.about_user is NOT NULL. Normally it is your assigned pair. In the
     // fallback case the UI never asks *who* you learned about instead, so we still store
     // the assigned pair and let was_fallback record that the content is really about the
@@ -296,7 +318,10 @@ class SupabaseRepository implements Repository {
   }
 
   @override
-  Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) async {
+  Future<void> submitAttendance(
+    String groupId,
+    Map<String, bool> showedUp,
+  ) async {
     if (showedUp.isEmpty) return;
     // One row per (me, subject). CHECK (voter_id <> subject_id) holds because the UI
     // builds this map from "everyone else" -- and _members() gives the current user id
@@ -321,7 +346,8 @@ class SupabaseRepository implements Repository {
     // row only, and require at least two votes so a single early opinion does not tell
     // someone they flaked. Absent = fewer than half the voters saw you.
     final rows =
-        await _client.rpc('attendance_result', params: {'grp': groupId}) as List;
+        await _client.rpc('attendance_result', params: {'grp': groupId})
+            as List;
     for (final r in rows.cast<Map<String, dynamic>>()) {
       if (r['subject_id'] != _uid) continue;
       final showed = (r['showed_up'] as num).toInt();
@@ -354,7 +380,8 @@ class SupabaseRepository implements Repository {
     // The reciprocity + invisibility rules live entirely in this function (see
     // 0002_after_meetup.sql): it returns a row only for a pick that went both ways, and
     // nothing here separates "did not pick me" from "was not in the group".
-    final rows = await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
+    final rows =
+        await _client.rpc('mutual_contacts', params: {'grp': groupId}) as List;
     return [
       for (final r in rows.cast<Map<String, dynamic>>())
         MutualContact(

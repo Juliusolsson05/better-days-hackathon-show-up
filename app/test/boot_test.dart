@@ -15,6 +15,6 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Show Up'), findsOneWidget);
+    expect(find.text('SOLO MEETUPS'), findsOneWidget);
   });
 }

@@ -31,12 +31,13 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
     final g = widget.state.group!;
     final vote = await widget.state.repo.myVenueVote(g.id);
     final tally = await widget.state.repo.venueTally(g.id);
-    if (mounted)
+    if (mounted) {
       setState(() {
         _myVote = vote;
         _tally = tally;
         _loading = false;
       });
+    }
   }
 
   Future<void> _vote(String optionId) async {

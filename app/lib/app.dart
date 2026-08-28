@@ -14,6 +14,7 @@ import 'features/group/no_show_sheet.dart';
 import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
+import 'features/product/product_shell.dart';
 
 class ShowUpApp extends StatefulWidget {
   const ShowUpApp({super.key});
@@ -73,6 +74,7 @@ class _ShowUpAppState extends State<ShowUpApp> {
               switch (_state.phase) {
                 Phase.auth => AuthScreen(_state),
                 Phase.onboarding => OnboardingScreen(_state),
+                Phase.home => ProductShell(_state),
                 Phase.waiting => WaitingScreen(_state),
                 Phase.matched || Phase.during => GroupChatScreen(_state),
                 Phase.after => AfterFlow(_state),
@@ -138,6 +140,7 @@ class _DevJump extends StatelessWidget {
           },
           itemBuilder: (_) => const [
             PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
+            PopupMenuItem(value: Phase.home, child: Text('2 - Home')),
             PopupMenuItem(value: Phase.waiting, child: Text('2 - Waiting')),
             PopupMenuItem(
               value: Phase.matched,

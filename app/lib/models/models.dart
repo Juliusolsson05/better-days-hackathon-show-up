@@ -3,7 +3,7 @@
 
 // `auth` is the first phase only when the app runs against the real backend
 // (--dart-define=USE_SUPABASE=true); the mock flow skips straight to onboarding.
-enum Phase { auth, onboarding, waiting, matched, during, after, contacts }
+enum Phase { auth, onboarding, home, waiting, matched, during, after, contacts }
 
 class Profile {
   final String id;
@@ -78,8 +78,9 @@ class Group {
     this.chosenVenueId,
   });
 
-  VenueOption? get chosenVenue =>
-      chosenVenueId == null ? null : venueOptions.firstWhere((v) => v.id == chosenVenueId);
+  VenueOption? get chosenVenue => chosenVenueId == null
+      ? null
+      : venueOptions.firstWhere((v) => v.id == chosenVenueId);
 }
 
 enum MessageKind { user, venueVote, system }

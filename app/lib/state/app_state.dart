@@ -6,7 +6,8 @@ import '../models/models.dart';
 /// ChangeNotifier rather than a state-management package: one less dependency, and the
 /// app has exactly one piece of global state -- where you are in the flow.
 class AppState extends ChangeNotifier {
-  AppState(this.repo, {Phase initialPhase = Phase.onboarding}) : phase = initialPhase;
+  AppState(this.repo, {Phase initialPhase = Phase.onboarding})
+    : phase = initialPhase;
   final Repository repo;
 
   Phase phase;
@@ -28,7 +29,15 @@ class AppState extends ChangeNotifier {
 
   Future<void> completeOnboarding(Profile p) async {
     me = p;
-    phase = Phase.waiting;
+    phase = Phase.home;
+    notifyListeners();
+  }
+
+  /// The approved mock permits skipping onboarding. This changes only presentation state;
+  /// it deliberately does not create a fake backend profile or smuggle placeholder data
+  /// through the repository contract.
+  void skipOnboarding() {
+    phase = Phase.home;
     notifyListeners();
   }
 

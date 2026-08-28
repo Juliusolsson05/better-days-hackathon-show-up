@@ -27,6 +27,7 @@ abstract class Repository {
     required List<String> tags,
     required String city,
     required List<String> availability,
+
     /// Local file path from the image picker. Uploaded to Supabase Storage and sent
     /// to submit-profile as photo_url. Null is allowed; the edge function accepts it.
     String? photoPath,
@@ -46,7 +47,11 @@ abstract class Repository {
 
   Future<Assignment> assignment(String groupId);
 
-  Future<void> submitReflection(String groupId, String text, {bool wasFallback = false});
+  Future<void> submitReflection(
+    String groupId,
+    String text, {
+    bool wasFallback = false,
+  });
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp);
 
   /// True once the group has voted and the majority marked you absent. The PRD's flaking

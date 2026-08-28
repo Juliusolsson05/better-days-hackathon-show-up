@@ -11,7 +11,7 @@ class QuestionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final a = state.assignment;
+    final assignment = state.assignment;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 14, 24, 40),
       child: Column(
@@ -37,7 +37,10 @@ class QuestionSheet extends StatelessWidget {
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 24),
-          if (a == null)
+          if (assignment == null)
+            // A neutral placeholder avoids fabricating a question while assignment() is still
+            // loading. The private server row is the source of truth; a client-side fallback
+            // could violate the one-target-per-member derangement matching guarantees.
             Container(
               height: 92,
               decoration: BoxDecoration(
@@ -54,7 +57,7 @@ class QuestionSheet extends StatelessWidget {
                 borderRadius: BorderRadius.circular(cardRadius),
               ),
               child: Text(
-                a.question,
+                assignment.question,
                 style: const TextStyle(
                   color: ink,
                   fontSize: 18,
@@ -65,7 +68,7 @@ class QuestionSheet extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             Text(
-              'Your person is ${a.targetName}.',
+              'Your person is ${assignment.targetName}.',
               style: const TextStyle(
                 color: inkDeep,
                 fontWeight: FontWeight.w700,

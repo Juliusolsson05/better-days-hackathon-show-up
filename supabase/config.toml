@@ -58,8 +58,10 @@ enabled = true
 schema_paths = []
 
 [db.seed]
-# If enabled, seeds the database after migrations during a db reset.
-enabled = true
+# No Postgres seed exists yet; the million-row demo population is intentionally a ClickHouse
+# seed. Keeping this enabled made `supabase db reset` depend on a nonexistent `seed.sql`, which
+# is the exact opposite of a reliable reset path.
+enabled = false
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
 sql_paths = ["./seed.sql"]

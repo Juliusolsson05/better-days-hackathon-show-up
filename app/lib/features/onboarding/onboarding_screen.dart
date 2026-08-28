@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/theme.dart';
+import '../../models/profile_input.dart';
 import '../../state/app_state.dart';
 
 /// Signup. Interests and photo are required, per the PRD -- interests are the matching
@@ -34,6 +35,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   static const _slots = ['fri_eve', 'sat_day', 'sat_eve', 'sun_day'];
 
   final _name = TextEditingController();
+  final _phone = TextEditingController();
   final _passion = TextEditingController();
   final _customTag = TextEditingController();
   final _picked = <String>{};
@@ -44,14 +46,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   XFile? _photo;
   bool _busy = false;
 
-  // NOTE: the PRD calls the photo required, but the widget test and the mock demo flow
-  // treat it as optional. Left non-blocking here pending a team call; the upload path is
-  // fully wired either way (see SupabaseRepository._uploadPhoto).
+  String? get _normalizedPhone => normalizeSfPhone(_phone.text);
+
+  // Photo and phone are not decoration: the former makes the matched group feel like people,
+  // and the latter is the endpoint of mutual contact exchange. Letting either be absent creates
+  // a profile that can enter matching but cannot complete the product loop.
   bool get _valid =>
       _name.text.trim().isNotEmpty &&
       _passion.text.trim().length > 10 &&
       _picked.isNotEmpty &&
-      _avail.isNotEmpty;
+      _avail.isNotEmpty &&
+      _photo != null &&
+      _normalizedPhone != null;
 
   static const _maxExtraTags = 8;
 
@@ -63,12 +69,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         maxWidth: 1200,
         imageQuality: 82,
       );
-      if (picked != null && mounted) setState(() => _photo = picked);
+      if (picked != null && mounted) {
+        setState(() => _photo = picked);
+      }
     } catch (_) {
       // Permission denied, or the picker channel threw. Nothing actionable to show
       // beyond letting them try again.
-      if (mounted)
+      if (mounted) {
         _toast('Could not open your photos. Check the app permission.');
+      }
     }
   }
 
@@ -92,7 +101,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     setState(() {
       final known = _interests.contains(tag) || _extraTags.contains(tag);
-      if (!known) _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      if (!known) {
+        _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
+      }
       _picked.add(known ? tag : _extraTags.last);
       _customTag.clear();
     });
@@ -108,6 +119,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         tags: _picked.toList(),
         city: 'SF',
         availability: _avail.toList(),
+        phone: _normalizedPhone!,
         photoPath: _photo?.path,
       );
       await widget.state.completeOnboarding(p);
@@ -134,6 +146,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _phone.dispose();
     _passion.dispose();
     _customTag.dispose();
     super.dispose();
@@ -168,9 +181,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           const SizedBox(height: 24),
 
+          const _Label('Your phone number'),
+          Text(
+            'Only people you choose who also choose you will ever see it.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _phone,
+            onChanged: (_) => setState(() {}),
+            keyboardType: TextInputType.phone,
+            autofillHints: const [AutofillHints.telephoneNumber],
+            decoration: const InputDecoration(hintText: '(415) 555-0123'),
+          ),
+          const SizedBox(height: 24),
+
           const _Label('Add a photo'),
           Text(
-            'Anything but your face: a view, a plant, your dog.',
+            'A clear photo of you — this is how the group recognizes each other.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 10),

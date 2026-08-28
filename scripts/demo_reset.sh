@@ -9,9 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env
 
-echo "→ clearing groups, memberships, rsvps, reflections, shares"
+echo "→ clearing group-owned demo state"
 psql "$SUPABASE_DB_URL" -q <<'SQL'
-truncate number_shares, reflections, rsvps, group_members, messages restart identity cascade;
+-- `groups` is the aggregate root. Every membership, RSVP, message, assignment, reflection,
+-- attendance ballot, contact choice, venue option, and venue vote has an ON DELETE CASCADE path
+-- from it. Naming leaves here drifted as parallel migrations added and retired tables, causing
+-- the reset itself to fail before a rehearsal; deleting the root follows the schema contract.
 delete from groups;
 SQL
 

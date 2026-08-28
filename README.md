@@ -144,22 +144,23 @@ the embedding is the recall step, the tags Claude extracts are the precision ste
 
 ## Implementation deltas
 
-The PRD above supersedes the earlier spec. A **draft** schema for the new rules sits at
-`supabase/drafts/0002_product_model.sql.draft` -- deliberately outside `migrations/` so it
-cannot be applied by accident. The data model is not settled; the draft lists the open
-questions. Current state:
+The PRD above supersedes the earlier spec. Migration `0002_product_contracts.sql` is the
+database contract for the current rules. Private assignments, phone numbers, ballots, and
+one-way contact selections are separated at that boundary so a modified client cannot reveal
+them. Current state:
 
 | PRD says | State | Where |
 |---|---|---|
 | Groups of **4 to 6** | done | `run-matching` `MIN_GROUP`/`MAX_GROUP` |
-| App posts **2-3 venue options**, group votes **anonymously** | schema drafted | draft: `venue_options`, `venue_votes`, `venue_tally()` |
-| Contact exchange on **mutual selection**, unselected is invisible | schema drafted | draft: `contact_selections`, `mutual_contacts()` |
-| Attendance from the **group's votes** | schema drafted | draft: `attendance_votes`, `attendance_result()` |
-| Photo **required**, faces are the point | schema drafted | draft: `profiles.photo_url` not-null |
-| Group chat opens **at formation**, is the only surface | not built | `app/lib/features/` |
-| No standalone profile page | not built - keep it that way | - |
+| App posts **2-3 venue options**, group votes **anonymously** | database + app protocol done | `venue_options`, `venue_votes`, `venue_tally()` |
+| Contact exchange on **mutual selection**, unselected is invisible | database + app protocol done | `contact_selections`, `mutual_contacts()` |
+| Attendance from the **group's votes** | database + app protocol done | `attendance_votes`, `attendance_result()` |
+| Photo **required**, faces are the point | done | private `photos` bucket + signed groupmate URLs |
+| Group chat opens **at formation**, is the only surface | done | `app/lib/features/group/` |
+| No standalone profile page | done - keep it that way | - |
 | Groups **reshuffle** each meetup | not built | `run-matching` |
 
-Venue selection still needs `planGroup` split into "retrieve 3 real venues from
-`venue_vectors`, then write one line each" - see `docs/VENUE_MATCHING.md`. Until then the
-model is asked to name a venue from memory, which can invent a place that does not exist.
+Venue retrieval remains an independent deployment step: its output persists through
+`replace_venue_options()`, which validates 2-3 grounded choices and posts the vote into chat.
+Until that pipeline runs for a group, its legacy model-selected venue is shown only as a rollout
+fallback.

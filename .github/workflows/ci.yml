@@ -1,0 +1,47 @@
+name: product-contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: product-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # The SQL suite deliberately applies the forward migration to a real 0001 database and
+      # impersonates anon/authenticated JWT subjects. Static parsing cannot exercise either RLS
+      # or the documented public-Storage upgrade state, so CI owns a disposable local stack.
+      - name: Start disposable Supabase
+        run: supabase start
+
+      - name: Check every runtime contract
+        run: ./scripts/check.sh
+
+      - name: Build Android release artifact
+        working-directory: app
+        run: flutter build apk --release --no-pub
+
+      - name: Stop disposable Supabase
+        if: always()
+        run: supabase stop --no-backup

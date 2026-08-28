@@ -8,8 +8,8 @@ What we run, what we deliberately don't, and how the pieces authenticate to each
 
 | Service | Used for | Notes |
 |---|---|---|
-| **Supabase Auth** | Identity | Anonymous sign-in today, phone OTP in production — see §2 |
-| **Supabase Postgres** | OLTP source of truth | Users, groups, chat, RSVPs, reflections, number shares |
+| **Supabase Auth** | Identity | Email OTP today, phone OTP remains a production option — see §2 |
+| **Supabase Postgres** | OLTP source of truth | Users, groups, chat, RSVPs, private assignments, ballots, mutual contacts |
 | **Supabase Realtime** | Group chat | `postgres_changes` on `messages` |
 | **Supabase Storage** | Profile photos | Private bucket, signed URLs |
 | **Supabase Edge Functions** | All server code | Deno. Holds every secret |
@@ -34,29 +34,29 @@ What we run, what we deliberately don't, and how the pieces authenticate to each
 
 ### 2.1 The decision
 
-**Anonymous sign-in for the hackathon.** `supabase.auth.signInAnonymously()` creates a real
-row in `auth.users` and issues a real JWT. RLS works exactly as it does for any other user,
-`auth.uid()` is populated, and there is no external dependency.
+**Email OTP for the hackathon.** `signInWithOtp()` followed by `verifyOTP()` creates a real
+row in `auth.users` and issues the JWT that every RLS policy uses. Local codes land in Inbucket;
+the hosted project must have enough SMTP quota for the small demo cohort.
 
 The reasoning is about demo risk, not about laziness:
 
 | Option | Blocker |
 |---|---|
 | **Phone OTP** | Needs an SMS provider (Twilio/Vonage) configured and funded. Real setup, real cost, and an SMS that has to arrive on stage over venue wifi. |
-| **Email magic link** | Supabase's built-in SMTP is rate-limited to a handful of emails per hour on the free tier. Signing up two people during a demo can hit that limit and there is no way to explain it from the stage. |
+| **Email OTP** | Built and testable entirely in-app. Hosted SMTP remains a rehearsal risk, so demo accounts should be created before stage time. |
 | **Email + password** | Works, no external service, but adds two fields and a keyboard to the first screen of a product whose whole pitch is "the only decision is attend or don't". |
-| **Anonymous** | One tap. No provider, no rate limit, no network dependency beyond Supabase itself. |
+| **Anonymous** | Lowest-friction fallback, but a cleared app loses the only credential that owns the user's private profile and contact selections. |
 
-Anonymous sign-in must be enabled in the Supabase dashboard (Auth → Providers → Anonymous).
-It is off by default.
+Email sign-in must be enabled in the Supabase dashboard. Local development exposes codes at
+<http://127.0.0.1:54324>.
 
 ### 2.2 The phone number is profile data, not a credential
 
 This is worth stating because it looks like a contradiction: the product's climax is
 sharing your phone number, but the phone number is not how you log in.
 
-Decoupling them is correct regardless of the hackathon. The number in `number_shares` is
-contact information the user chooses to disclose to five specific people. Making it also
+Decoupling them is correct regardless of the hackathon. `profiles.phone` is column-revoked from
+direct groupmate reads and disclosed only by `mutual_contacts()` after two selections agree. Making it also
 the auth credential would conflate "how the system knows you" with "what you're willing to
 give a stranger", and would mean you cannot use the app without being reachable.
 
@@ -65,7 +65,7 @@ give a stranger", and would mean you cannot use the app without being reachable.
 ```
 Flutter                          Edge Function                    Postgres
   │                                    │                             │
-  ├─ signInAnonymously() ──────────────┼────────────────────────────►│ auth.users row
+  ├─ signInWithOtp() / verifyOTP() ────┼────────────────────────────►│ auth.users row
   │◄─ JWT ─────────────────────────────┼─────────────────────────────┤
   │                                    │                             │
   ├─ from('profiles').select() ────────┼────────────────────────────►│ RLS: auth.uid()
@@ -163,16 +163,16 @@ No additional filtering is needed server-side.
 
 ## 5. Storage
 
-One private bucket, `profile-photos`.
+One private bucket, `photos`.
 
-- Uploads are keyed `{user_id}/{uuid}.jpg` so the RLS policy can match on the path prefix.
+- Uploads are keyed `{user_id}/profile.jpg` so an upsert replaces the one current identity photo
+  instead of accumulating abandoned objects.
 - Reads go through signed URLs with a short expiry rather than making the bucket public.
 - Only groupmates can generate a signed URL for a given photo.
 
-**The "no face photos" rule is client-enforced only.** We do not run image classification on
-upload. A determined user can upload anything. **[hackathon shortcut]** — in production this
-is a vision check in the upload path, and it is genuinely important given what the rule
-exists to prevent.
+**The "clear photo of you" rule is client-enforced only.** We do not run image classification on
+upload. A determined user can upload anything. **[hackathon shortcut]** — in production this is
+a vision/moderation check in the upload path.
 
 ---
 
@@ -312,11 +312,11 @@ decorative.** That is the one mistake with no recovery short of rotating the key
 Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 
 - [ ] Create Supabase project, note the ref
-- [ ] ⚠ Enable **anonymous sign-in** (Auth → Providers) — off by default
+- [ ] ⚠ Enable **email OTP** and verify hosted SMTP quota before rehearsal
 - [ ] `supabase link --project-ref <ref>`
 - [ ] `supabase db push`
 - [ ] ⚠ Verify `messages` is in the `supabase_realtime` publication
-- [ ] Create the `profile-photos` bucket, private, with its storage policy
+- [ ] Verify migration `0002` created the private `photos` bucket and storage policies
 - [ ] Create ClickHouse Cloud service, note the HTTPS endpoint and password
 - [ ] Fill `.env` from `.env.example`
 - [ ] `supabase secrets set --env-file .env`

@@ -9,6 +9,7 @@ import '../../state/app_state.dart';
 class AfterFlow extends StatefulWidget {
   final AppState state;
   const AfterFlow(this.state, {super.key});
+
   @override
   State<AfterFlow> createState() => _AfterFlowState();
 }
@@ -20,30 +21,58 @@ class _AfterFlowState extends State<AfterFlow> {
   final _showedUp = <String, bool>{};
   final _selected = <String>{};
   bool _busy = false;
+  String? _error;
 
   List<Member> get _others =>
-      widget.state.group!.members.where((m) => m.id != 'me').toList();
+      widget.state.group!.members.where((member) => member.id != 'me').toList();
 
   Future<void> _next() async {
-    final g = widget.state.group!;
-    setState(() => _busy = true);
-    if (_step == 0) {
-      await widget.state.repo.submitReflection(
-        g.id,
-        _learned.text.trim(),
-        wasFallback: _fallback,
-      );
-    } else if (_step == 1) {
-      await widget.state.repo.submitAttendance(g.id, _showedUp);
-    } else {
-      await widget.state.repo.selectContacts(g.id, _selected);
-      await widget.state.loadContacts();
+    // Empty reflections are rejected before any network work. The database also protects its
+    // shape, but keeping the person on the same step gives them an actionable recovery path.
+    if (_step == 0 && _learned.text.trim().isEmpty) {
+      setState(() => _error = 'Write one thing that stuck with you.');
       return;
     }
+
+    final group = widget.state.group!;
     setState(() {
-      _step++;
-      _busy = false;
+      _busy = true;
+      _error = null;
     });
+    try {
+      if (_step == 0) {
+        await widget.state.repo.submitReflection(
+          group.id,
+          _learned.text.trim(),
+          wasFallback: _fallback,
+        );
+      } else if (_step == 1) {
+        await widget.state.repo.submitAttendance(group.id, _showedUp);
+      } else {
+        await widget.state.repo.selectContacts(group.id, _selected);
+        // loadContacts reads the server-derived mutual set and performs the phase transition.
+        // Navigating from the local selection would reveal unreciprocated choices and violate
+        // the privacy contract this flow is specifically meant to preserve.
+        await widget.state.loadContacts();
+        return;
+      }
+
+      if (mounted) setState(() => _step++);
+    } catch (_) {
+      // Every step is independently durable. Staying put on failure lets a retry upsert the same
+      // record instead of advancing the UI beyond data that never reached the backend.
+      if (mounted) setState(() => _error = 'That did not save. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    // AfterFlow may unmount when loadContacts changes the global phase. Releasing this controller
+    // here avoids retaining its listener and the potentially personal reflection text afterward.
+    _learned.dispose();
+    super.dispose();
   }
 
   @override
@@ -65,9 +94,21 @@ class _AfterFlowState extends State<AfterFlow> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: FilledButton(
-            onPressed: _busy ? null : _next,
-            child: Text(_step == 2 ? 'Done' : 'Next'),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_error != null) ...[
+                Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                const SizedBox(height: 8),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _busy ? null : _next,
+                  child: Text(_step == 2 ? 'Done' : 'Next'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -75,7 +116,7 @@ class _AfterFlowState extends State<AfterFlow> {
   }
 
   Widget _reflection() {
-    final a = widget.state.assignment;
+    final assignment = widget.state.assignment;
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(24),
@@ -83,7 +124,7 @@ class _AfterFlowState extends State<AfterFlow> {
         Text(
           _fallback
               ? 'No problem. What did you learn about anyone else?'
-              : 'What did you learn from ${a?.targetName ?? 'your person'}?',
+              : 'What did you learn from ${assignment?.targetName ?? 'your person'}?',
           style: Theme.of(context).textTheme.headlineMedium,
         ),
         const SizedBox(height: 8),
@@ -101,11 +142,13 @@ class _AfterFlowState extends State<AfterFlow> {
           ),
         ),
         const SizedBox(height: 16),
-        // The PRD's fallback: if your target did not show, answer about anyone else.
+        // The fallback is intentionally private and changes only the reflection's target. It must
+        // not create a public accusation or skip the reflection just because the assigned person
+        // was absent.
         if (!_fallback)
           TextButton(
             onPressed: () => setState(() => _fallback = true),
-            child: Text('${a?.targetName ?? 'They'} did not show up'),
+            child: Text('${assignment?.targetName ?? 'They'} did not show up'),
           ),
       ],
     );
@@ -133,13 +176,18 @@ class _AfterFlowState extends State<AfterFlow> {
               for (var i = 0; i < _others.length; i++) ...[
                 SwitchListTile(
                   value: _showedUp[_others[i].id] ?? true,
-                  onChanged: (v) =>
-                      setState(() => _showedUp[_others[i].id] = v),
+                  onChanged: (value) =>
+                      setState(() => _showedUp[_others[i].id] = value),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 4,
                   ),
-                  secondary: Avatar(_others[i].avatar),
+                  // Photos are signed by the repository because the storage bucket is private.
+                  // The emoji remains Avatar's fallback, not a reason to discard that signed URL.
+                  secondary: Avatar(
+                    _others[i].avatar,
+                    imageUrl: _others[i].photoUrl,
+                  ),
                   title: Text(_others[i].displayName),
                 ),
                 if (i != _others.length - 1)
@@ -178,8 +226,8 @@ class _AfterFlowState extends State<AfterFlow> {
               for (var i = 0; i < _others.length; i++) ...[
                 CheckboxListTile(
                   value: _selected.contains(_others[i].id),
-                  onChanged: (v) => setState(
-                    () => v!
+                  onChanged: (value) => setState(
+                    () => value!
                         ? _selected.add(_others[i].id)
                         : _selected.remove(_others[i].id),
                   ),
@@ -188,7 +236,10 @@ class _AfterFlowState extends State<AfterFlow> {
                     vertical: 4,
                   ),
                   controlAffinity: ListTileControlAffinity.trailing,
-                  secondary: Avatar(_others[i].avatar),
+                  secondary: Avatar(
+                    _others[i].avatar,
+                    imageUrl: _others[i].photoUrl,
+                  ),
                   title: Text(_others[i].displayName),
                 ),
                 if (i != _others.length - 1)

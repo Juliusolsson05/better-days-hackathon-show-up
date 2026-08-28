@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release builds use the same Supabase/Sentry/network contracts as debug builds. Keeping
+         INTERNET only in debug/profile manifests produces a green local run and a dead APK. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="showup"
         android:name="${applicationName}"

@@ -24,22 +24,22 @@ Future<void> main() async {
     return;
   }
 
-  await SentryFlutter.init(
-    (options) {
-      options.dsn = _dsn;
-      // Release builds are what run on the demo phone, and they have no attached console --
-      // which is the entire reason this exists. Debug events would just be noise, since
-      // the simulator prints them anyway.
-      options.debug = false;
-      options.environment = const String.fromEnvironment('ENV', defaultValue: 'dev');
-      // Full sampling: this is a hackathon build with a handful of users, and a missed
-      // error costs far more than the quota does.
-      options.tracesSampleRate = 1.0;
-      options.attachScreenshot = true;
-      options.attachViewHierarchy = true;
-    },
-    appRunner: _boot,
-  );
+  await SentryFlutter.init((options) {
+    options.dsn = _dsn;
+    // Release builds are what run on the demo phone, and they have no attached console --
+    // which is the entire reason this exists. Debug events would just be noise, since
+    // the simulator prints them anyway.
+    options.debug = false;
+    options.environment = const String.fromEnvironment(
+      'ENV',
+      defaultValue: 'dev',
+    );
+    // Full sampling: this is a hackathon build with a handful of users, and a missed
+    // error costs far more than the quota does.
+    options.tracesSampleRate = 1.0;
+    options.attachScreenshot = true;
+    options.attachViewHierarchy = true;
+  }, appRunner: _boot);
 }
 
 /// Initialises Supabase when the real-backend flag is set, then starts the app. Shared by
@@ -51,7 +51,13 @@ Future<void> _boot() async {
       _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,
       'USE_SUPABASE=true needs SUPABASE_URL and SUPABASE_ANON_KEY dart-defines',
     );
-    await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+    // Supabase renamed the public client credential to "publishable key" to make its security
+    // role harder to misunderstand. Keep the environment variable backward-compatible for the
+    // demo scripts, but use the current SDK argument so a future major upgrade is not blocked.
+    await Supabase.initialize(
+      url: _supabaseUrl,
+      publishableKey: _supabaseAnonKey,
+    );
   }
   runApp(const ShowUpApp());
 }

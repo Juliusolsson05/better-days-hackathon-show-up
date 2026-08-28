@@ -66,6 +66,8 @@ class VenueMap extends StatelessWidget {
                 icon: const Icon(Icons.directions, size: 18),
                 label: const Text('Directions'),
                 style: FilledButton.styleFrom(
+                  // Directions is a primary physical-world action, so retain the restyle's
+                  // full touch target even though the compact version fits more tightly.
                   minimumSize: const Size(0, 44),
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   backgroundColor: accent,
@@ -99,6 +101,7 @@ Future<void> _openDirections(VenueOption v) async {
 class _Fallback extends StatelessWidget {
   final String address;
   const _Fallback(this.address);
+
   @override
   Widget build(BuildContext context) => Container(
     height: 84,

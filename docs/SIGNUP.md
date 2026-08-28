@@ -17,36 +17,23 @@ mock-only — the auth screen does not appear.
 
 1. **`AuthScreen`** — `signInWithOtp(email, shouldCreateUser: true)`, then `verifyOTP`
    with the six-digit code. Local stack: codes land in Inbucket at
-   <http://127.0.0.1:54324>. A restored session skips straight to onboarding.
-2. **`OnboardingScreen`** — name, photo (gallery), chat emoji, fixed interests + your
-   own, passion free-text, availability.
+   <http://127.0.0.1:54324>. A restored session reconstructs whether the user is onboarding,
+   waiting, or already matched.
+2. **`OnboardingScreen`** — name, phone, required photo (gallery), chat emoji, fixed interests
+   + your own, passion free-text, availability.
 3. **`SupabaseRepository.submitProfile`** — uploads the photo to
    `photos/<uid>/profile.jpg` (upsert), then calls the `submit-profile` edge function
    with `photo_url`. The function upserts `profiles`, embeds via Voyage, extracts tags
    via Claude, and writes `profile_vectors`.
 
-## One-time setup: the photo bucket
+## Photo storage
 
-`submit-profile` and the storage upload assume a public `photos` bucket. It is not in a
-migration yet (schema `0002` is still a draft). Create it once:
-
-```sql
-insert into storage.buckets (id, name, public) values ('photos', 'photos', true)
-on conflict (id) do nothing;
-
-create policy "own photo upload" on storage.objects for insert to authenticated
-  with check (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
-create policy "own photo update" on storage.objects for update to authenticated
-  using (bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text);
-create policy "photos are public" on storage.objects for select
-  using (bucket_id = 'photos');
-```
+Migration `0002_product_contracts.sql` creates the private `photos` bucket and its policies.
+Profiles store the object path, not a permanent public URL; groupmates receive a short-lived
+signed URL only after RLS confirms shared membership.
 
 ## Open decisions
 
-- **Photo required?** The PRD says yes; the widget test and mock demo treat it as
-  optional, so `_valid` in `OnboardingScreen` does not block on it. Flip one clause to
-  enforce it once the team agrees (and update `app/test/widget_test.dart`).
 - **City** is hardcoded to `SF` in `OnboardingScreen._submit`.
-- The group / chat / vote / after-meetup methods on `SupabaseRepository` throw
-  `UnimplementedError` — they need the `0002` schema promoted out of `drafts/`.
+- Phone normalisation assumes an SF/US user when ten local digits are entered. Replace the
+  `normalizeSfPhone` seam with country-aware parsing when city selection is built.

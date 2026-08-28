@@ -29,6 +29,12 @@ jobs:
         with:
           version: latest
 
+      # scripts/check.sh uses ripgrep to discover tests and scripts rather than maintaining a
+      # second file manifest that drifts as agents add modules. GitHub's Ubuntu image does not
+      # promise rg even though every development machine currently has it.
+      - name: Install repository check dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+
       # The SQL suite deliberately applies the forward migration to a real 0001 database and
       # impersonates anon/authenticated JWT subjects. Static parsing cannot exercise either RLS
       # or the documented public-Storage upgrade state, so CI owns a disposable local stack.

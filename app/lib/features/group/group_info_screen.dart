@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../state/app_state.dart';
+import 'venue_map.dart';
 
 /// Reached by tapping the group name, the way WhatsApp group info works. Members and
 /// photos only -- there is deliberately no profile page to navigate into.
@@ -41,17 +42,7 @@ class GroupInfoScreen extends StatelessWidget {
               Text(venue.address,
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
               const SizedBox(height: 14),
-              // Map placeholder: a real build drops a pin here. Not worth an API key today.
-              Container(
-                height: 120,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: Colors.white.withValues(alpha: 0.05),
-                ),
-                alignment: Alignment.center,
-                child: Text('map',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.25))),
-              ),
+              VenueMap(venue),
             ]),
           ),
           const SizedBox(height: 24),

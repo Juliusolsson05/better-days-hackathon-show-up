@@ -125,6 +125,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Show Up')),
       body: ListView(
+        // Scrolling away from a field should close its keyboard.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
           const Text('You go alone. So does everyone else.',

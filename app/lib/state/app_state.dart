@@ -6,7 +6,8 @@ import '../models/models.dart';
 /// ChangeNotifier rather than a state-management package: one less dependency, and the
 /// app has exactly one piece of global state -- where you are in the flow.
 class AppState extends ChangeNotifier {
-  AppState(this.repo, {Phase initialPhase = Phase.onboarding}) : phase = initialPhase;
+  AppState(this.repo, {Phase initialPhase = Phase.onboarding})
+    : phase = initialPhase;
   final Repository repo;
 
   Phase phase;
@@ -38,6 +39,19 @@ class AppState extends ChangeNotifier {
     if (group == null) return;
     assignment = await repo.assignment(group!.id);
     phase = Phase.matched;
+    notifyListeners();
+  }
+
+  /// Refreshes server-owned group state without replaying the navigation transition.
+  ///
+  /// Venue selection is completed by the database when the final ballot lands. Keeping a
+  /// stale Group object after voting would make the tally correct while group info still says
+  /// "voting open" until the app restarts. This narrow refresh lets the vote card pick up the
+  /// winner without reloading the private assignment or changing phases.
+  Future<void> refreshGroup() async {
+    final refreshed = await repo.currentGroup();
+    if (refreshed == null) return;
+    group = refreshed;
     notifyListeners();
   }
 

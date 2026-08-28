@@ -14,11 +14,11 @@ import { nextSlot } from "../_shared/schedule.ts";
 const MIN_GROUP = 4;
 const MAX_GROUP = 6;
 
-// The header comment says this is triggered "by a button during the demo" -- that button
-// is the operator dashboard (dashboard/index.html), a page served from a different origin,
-// so every response needs CORS or the browser never sees it, not even the 403. The auth
-// check below is the real gate; `*` here only lets the reply through, it grants nothing.
-// Mirrors supabase/functions/analytics/index.ts, which does the same for the same reason.
+// The header comment says this can be triggered "by a button during the demo". That operator
+// control may be served from a different origin, so every response needs CORS or the browser
+// never sees it, not even the 403. The judge-facing analytics now lives in ClickHouse Cloud's
+// native dashboard; keeping CORS here avoids coupling the privileged sweep trigger to that one
+// presentation surface. The check below is the real gate; `*` only lets replies through.
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",

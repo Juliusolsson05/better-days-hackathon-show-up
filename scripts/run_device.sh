@@ -37,11 +37,26 @@ if xcrun devicectl device info lockState --device "$DEVICE" 2>/dev/null | grep -
   exit 1
 fi
 
+# Mock is the default so the device build never silently depends on a backend being up.
+# USE_SUPABASE=true in .env (or the environment) switches to the real one; main.dart only
+# calls Supabase.initialize under the same flag.
+USE_SUPABASE="${USE_SUPABASE:-false}"
+if [[ "$USE_SUPABASE" == "true" ]]; then
+  # main.dart guards this with an assert, which Dart strips in release -- and release is
+  # the only mode that works on a device. So check it here, where it will actually run.
+  : "${SUPABASE_URL:?USE_SUPABASE=true needs SUPABASE_URL}"
+  : "${SUPABASE_ANON_KEY:?USE_SUPABASE=true needs SUPABASE_ANON_KEY}"
+  echo "→ real backend: $SUPABASE_URL"
+else
+  echo "→ MockRepository (set USE_SUPABASE=true for the real backend)"
+fi
+
 echo "→ release build to $DEVICE"
 # .env lives at the repo root, the Flutter project one level down in app/.
 cd app
 exec flutter run --release -d "$DEVICE" \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  --dart-define=USE_SUPABASE="$USE_SUPABASE" \
   --dart-define=SENTRY_DSN="${SENTRY_DSN:-}" \
   --dart-define=ENV="${ENV:-dev}"

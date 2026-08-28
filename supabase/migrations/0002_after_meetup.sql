@@ -1,12 +1,10 @@
 -- ============================================================================
 -- After-meetup slice of the 0002 draft, promoted to a real migration.
 --
--- WHY only a slice: supabase/drafts/0002_product_model.sql.draft also carries the
--- venue-voting tables and the cohesion->seed_distance rename. Those are being reworked
--- on feat/venue-pipeline (real venue retrieval, a venue corpus in ClickHouse) and the
--- rename means editing run-matching -- both belong with that work, not here. This file
--- takes ONLY what the post-meetup flow (after_flow.dart, contacts_screen.dart) needs:
--- attendance, contact exchange, and the reflection fallback flag.
+-- WHY only a slice: this migration shipped before the product-contract reconciliation.
+-- It takes ONLY what the post-meetup flow needed at that point: attendance, contact exchange,
+-- and the reflection fallback flag. Migration 0003 deliberately upgrades this deployed shape
+-- with cross-group integrity, venue voting, private assignments, and matching idempotency.
 --
 -- >>> The venue migration that follows MUST be 0003, not 0002. Two files with version
 -- >>> 0002 make `supabase db push` reject the whole set as a duplicate version. <<<

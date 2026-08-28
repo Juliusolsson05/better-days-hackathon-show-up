@@ -9,9 +9,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env
 
-echo "→ clearing groups, memberships, rsvps, reflections, shares"
+echo "→ clearing groups, private assignments, ballots, reflections, and contacts"
 psql "$SUPABASE_DB_URL" -q <<'SQL'
-truncate number_shares, reflections, rsvps, group_members, messages restart identity cascade;
+-- Keep this explicit rather than relying only on CASCADE: when a new group-scoped table lands,
+-- a reviewer can see whether rehearsal state must include it. Silent leftovers are how the
+-- second demo run ends up showing the first run's votes.
+truncate contact_selections, attendance_votes, venue_votes, venue_options,
+         member_assignments, reflections, rsvps, messages, group_members
+restart identity cascade;
 delete from groups;
 SQL
 

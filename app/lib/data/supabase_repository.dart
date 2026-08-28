@@ -481,7 +481,7 @@ class SupabaseRepository implements Repository {
     try {
       final response = await _client.functions.invoke(
         'track',
-        body: {'name': event, 'group_id': ?groupId, 'props': props},
+        body: {'name': event, 'group_id': groupId, 'props': props},
       );
       // invoke() returns non-2xx responses as data rather than necessarily throwing. If
       // we ignore the status, a rejected event looks identical to a written one in debug

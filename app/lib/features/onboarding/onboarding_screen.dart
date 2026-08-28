@@ -13,11 +13,19 @@ typedef PhotoPicker = Future<XFile?> Function();
 /// input, the photo is what makes the group feel like people rather than names.
 class OnboardingScreen extends StatefulWidget {
   final AppState state;
-  const OnboardingScreen(this.state, {super.key, this.pickPhoto});
+  const OnboardingScreen(
+    this.state, {
+    super.key,
+    this.pickPhoto,
+    this.referenceUiPreview = false,
+    this.onReferenceComplete,
+  });
 
   /// The platform picker is injected only by widget tests. Keeping the seam at the OS boundary
   /// lets tests exercise the approved photo step without weakening its required-photo contract.
   final PhotoPicker? pickPhoto;
+  final bool referenceUiPreview;
+  final VoidCallback? onReferenceComplete;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -168,8 +176,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     // contract, so silently using it in production would trade visual parity for invalid profiles.
     // Keeping both presentations at this boundary makes the preview exact without weakening the
     // backend-capable flow while those missing fields await an approved product design.
-    if (widget.state.referenceUiPreview) {
-      return _ReferenceOnboarding(widget.state, pickPhoto: widget.pickPhoto);
+    if (widget.referenceUiPreview) {
+      return _ReferenceOnboarding(
+        widget.state,
+        pickPhoto: widget.pickPhoto,
+        onComplete: widget.onReferenceComplete,
+      );
     }
 
     return Scaffold(
@@ -361,10 +373,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 }
 
 class _ReferenceOnboarding extends StatefulWidget {
-  const _ReferenceOnboarding(this.state, {this.pickPhoto});
+  const _ReferenceOnboarding(this.state, {this.pickPhoto, this.onComplete});
 
   final AppState state;
   final PhotoPicker? pickPhoto;
+  final VoidCallback? onComplete;
 
   @override
   State<_ReferenceOnboarding> createState() => _ReferenceOnboardingState();
@@ -500,7 +513,11 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
         phone: '+14155550123',
         photoPath: _photo!.path,
       );
-      await widget.state.completeOnboarding(profile);
+      if (widget.onComplete case final onComplete?) {
+        onComplete();
+      } else {
+        await widget.state.completeOnboarding(profile);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -594,7 +611,7 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
             ),
             const SizedBox(height: 12),
             TextButton(
-              onPressed: _busy ? null : widget.state.skipOnboarding,
+              onPressed: _busy ? null : widget.onComplete,
               style: TextButton.styleFrom(
                 foregroundColor: mutedInk,
                 minimumSize: const Size.fromHeight(32),

@@ -1,10 +1,7 @@
 // Domain models. Deliberately plain: no codegen, no freezed, no json_serializable.
 // Hand-written fromMap keeps the Supabase swap honest without a build_runner step.
 
-// `home` is intentionally not part of the durable backend lifecycle. It exists solely
-// as the gated reference-UI preview; restored and newly completed real profiles resolve
-// to waiting/matched from repository truth rather than treating static mock groups as data.
-enum Phase { auth, onboarding, home, waiting, matched, during, after, contacts }
+enum Phase { auth, onboarding, waiting, matched, during, after, contacts }
 
 /// RSVP is persisted separately from membership because being placed in a group and agreeing
 /// to attend are different facts. Keeping the pending state explicit prevents a missing row or

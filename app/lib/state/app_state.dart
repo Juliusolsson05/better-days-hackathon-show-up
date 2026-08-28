@@ -16,7 +16,6 @@ class AppState extends ChangeNotifier {
   AppState(
     this.repo, {
     Phase initialPhase = Phase.onboarding,
-    this.referenceUiPreview = false,
     NotificationPermissionRequest? requestNotificationPermission,
     NotificationLadderSchedule? scheduleNotificationLadder,
   }) : _requestNotificationPermission =
@@ -34,12 +33,6 @@ class AppState extends ChangeNotifier {
   // it avoids replacing the repository or teaching the production notification service about tests.
   final NotificationPermissionRequest _requestNotificationPermission;
   final NotificationLadderSchedule _scheduleNotificationLadder;
-
-  /// The reference build deliberately models screens that do not yet have backend
-  /// contracts. Making preview eligibility constructor-owned keeps tests explicit and,
-  /// more importantly, prevents a restored Supabase session from drifting into static
-  /// sample data merely because Flutter happens to be running in debug mode.
-  final bool referenceUiPreview;
 
   Phase phase;
   Profile? me;
@@ -97,25 +90,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> completeOnboarding(Profile p) async {
     me = p;
-    if (referenceUiPreview) {
-      phase = Phase.home;
-    } else {
-      // Profile completion is durable, but matching is server-owned. Reading the
-      // repository immediately avoids both invented client-side matches and a brief
-      // trip through the static reference shell before the waiting/chat destination.
-      await _loadProductPhase();
-    }
-    notifyListeners();
-  }
-
-  /// The approved mock permits skipping onboarding. This changes only presentation state;
-  /// it deliberately does not create a fake backend profile or smuggle placeholder data
-  /// through the repository contract.
-  void skipOnboarding() {
-    // Only the approved preview has somewhere legitimate to skip to. In every other
-    // configuration the waiting screen is the safest non-fabricated destination; the
-    // real onboarding UI does not expose this control, so no backend profile is implied.
-    phase = referenceUiPreview ? Phase.home : Phase.waiting;
+    // Profile completion is durable, but matching is server-owned. Reading the repository
+    // immediately avoids both invented client-side matches and a trip through fixture UI.
+    await _loadProductPhase();
     notifyListeners();
   }
 

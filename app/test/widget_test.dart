@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:showup/app.dart';
 import 'package:showup/core/theme.dart';
 import 'package:showup/data/mock_repository.dart';
 import 'package:showup/features/onboarding/onboarding_screen.dart';
-import 'package:showup/models/models.dart';
+import 'package:showup/reference_app.dart';
 import 'package:showup/state/app_state.dart';
 
 void main() {
@@ -16,9 +15,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    // Supabase is now the safe default for every real launch. Widget tests do not execute main()
-    // (and therefore cannot initialize its SDK), so fixture mode must be requested explicitly.
-    await tester.pumpWidget(const ShowUpApp(useMockRepositoryForTesting: true));
+    await tester.pumpWidget(const ReferenceShowUpApp());
     await tester.pump();
 
     expect(
@@ -59,7 +56,8 @@ void main() {
     addTearDown(tester.view.reset);
 
     final repo = MockRepository();
-    final state = AppState(repo, referenceUiPreview: true);
+    final state = AppState(repo);
+    var completed = false;
     addTearDown(repo.dispose);
 
     await tester.pumpWidget(
@@ -68,6 +66,8 @@ void main() {
         home: OnboardingScreen(
           state,
           pickPhoto: () async => XFile('assets/mock/maya.jpg'),
+          referenceUiPreview: true,
+          onReferenceComplete: () => completed = true,
         ),
       ),
     );
@@ -97,12 +97,8 @@ void main() {
     // the full shell owns.
     await tester.pump(const Duration(seconds: 1));
 
-    expect(state.phase, Phase.home);
-    expect(state.me?.tags, containsAll(<String>['slow-coffee', 'robotics']));
-    expect(
-      state.me?.passion,
-      'I build small robots and can talk about hardware all night.',
-    );
+    expect(completed, isTrue);
+    expect(await repo.hasProfile(), isTrue);
   });
 
   testWidgets('production onboarding still requires private profile fields', (

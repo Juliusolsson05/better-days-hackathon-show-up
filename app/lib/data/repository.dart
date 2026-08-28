@@ -83,6 +83,11 @@ abstract class Repository {
   });
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp);
 
+  /// True once the group has voted and the majority marked you absent. The PRD's flaking
+  /// rule: acknowledge it to that person privately, with no penalty and no group effect.
+  /// Returns false until enough votes are in to be a "verdict" rather than one opinion.
+  Future<bool> wasMarkedNoShow(String groupId);
+
   /// Selections are one-way and private. Nothing tells anyone they were not selected.
   Future<void> selectContacts(String groupId, Set<String> selectedIds);
   Future<List<MutualContact>> mutualContacts(String groupId);

@@ -7,11 +7,12 @@ import '../../state/app_state.dart';
 /// The vote lives inside the chat as a message, not on its own screen -- the PRD makes
 /// the chat the only surface.
 ///
-/// Voting is anonymous: the tally is shown, never who voted for what. The mock enforces
+/// Voting is anonymous: the tally is shown, never who voted for what. The repository enforces
 /// that by only ever returning counts, which is the same shape venue_tally() returns.
 class VenueVoteCard extends StatefulWidget {
   final AppState state;
   const VenueVoteCard(this.state, {super.key});
+
   @override
   State<VenueVoteCard> createState() => _VenueVoteCardState();
 }
@@ -35,15 +36,14 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
       _error = null;
     });
     try {
-      final g = widget.state.group!;
-      final vote = await widget.state.repo.myVenueVote(g.id);
-      final tally = await widget.state.repo.venueTally(g.id);
-      if (mounted) {
-        setState(() {
-          _myVote = vote;
-          _tally = tally;
-        });
-      }
+      final group = widget.state.group!;
+      final vote = await widget.state.repo.myVenueVote(group.id);
+      final tally = await widget.state.repo.venueTally(group.id);
+      if (!mounted) return;
+      setState(() {
+        _myVote = vote;
+        _tally = tally;
+      });
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not load the vote.');
     } finally {
@@ -52,15 +52,23 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
   }
 
   Future<void> _vote(String optionId) async {
-    if (_voting || widget.state.group!.chosenVenueId != null) return;
+    final group = widget.state.group!;
+    // chosenVenueId is the durable finalization signal. Once it exists, a stale card must not
+    // let a late tap rewrite the ballot after the product has already announced a destination.
+    if (_voting || group.chosenVenueId != null) return;
+
     final confirmedVote = _myVote;
     setState(() {
+      // Selection is optimistic so a tap feels immediate, but confirmedVote is retained because
+      // the repository -- not this widget -- decides whether the ballot actually committed.
       _myVote = optionId;
       _voting = true;
       _error = null;
     });
     try {
-      await widget.state.repo.castVenueVote(widget.state.group!.id, optionId);
+      await widget.state.repo.castVenueVote(group.id, optionId);
+      // Re-read both values after a successful write. Locally incrementing a tally would leak a
+      // stale count whenever another member voted concurrently.
       await _load();
     } catch (_) {
       if (mounted) {
@@ -76,48 +84,64 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
 
   @override
   Widget build(BuildContext context) {
-    final g = widget.state.group!;
-    final total = _tally.values.fold<int>(0, (a, b) => a + b);
+    final group = widget.state.group!;
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(cardRadius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.how_to_vote_outlined, size: 18, color: accent),
-              const SizedBox(width: 8),
-              const Text(
-                'Where should you go?',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.how_to_vote_outlined,
+                  size: 19,
+                  color: inkDeep,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Where should you go?',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 10),
           Text(
-            'Anonymous — nobody sees who picked what.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.5),
-            ),
+            group.chosenVenueId == null
+                ? 'Anonymous. Nobody sees who picked what.'
+                : 'Voting is closed. Your group destination is set.',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: LinearProgressIndicator(),
-            )
+            for (var i = 0; i < 2; i++)
+              Container(
+                height: 72,
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(inputRadius),
+                ),
+              )
           else if (_error != null && _tally.isEmpty)
             TextButton(onPressed: _load, child: Text('${_error!} Retry'))
           else ...[
-            for (final v in g.venueOptions)
-              _option(v, _tally[v.id] ?? 0, total),
+            for (final venue in group.venueOptions)
+              _option(venue, _tally[venue.id] ?? 0),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -132,22 +156,21 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
     );
   }
 
-  Widget _option(VenueOption v, int votes, int total) {
-    final mine = _myVote == v.id;
-    final share = total == 0 ? 0.0 : votes / total;
+  Widget _option(VenueOption venue, int votes) {
+    final mine = _myVote == venue.id;
+    final finalized = widget.state.group!.chosenVenueId != null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: _voting || widget.state.group!.chosenVenueId != null
-            ? null
-            : () => _vote(v.id),
+        borderRadius: BorderRadius.circular(inputRadius),
+        onTap: _voting || finalized ? null : () => _vote(venue.id),
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            color: mine ? accentPale : bg,
+            borderRadius: BorderRadius.circular(inputRadius),
             border: Border.all(
-              color: mine ? accent : Colors.white.withValues(alpha: 0.12),
+              color: mine ? inkDeep : Colors.transparent,
               width: mine ? 1.5 : 1,
             ),
           ),
@@ -158,37 +181,36 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
                 children: [
                   Expanded(
                     child: Text(
-                      v.name,
+                      venue.name,
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
-                  Text(
-                    '$votes',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mine ? accent : surface,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$votes',
+                      style: const TextStyle(
+                        color: ink,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
               Text(
-                v.pitch,
-                style: TextStyle(
+                venue.pitch,
+                style: const TextStyle(
                   fontSize: 13,
                   height: 1.35,
-                  color: Colors.white.withValues(alpha: 0.65),
-                ),
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: share,
-                  minHeight: 4,
-                  backgroundColor: Colors.white.withValues(alpha: 0.08),
-                  valueColor: AlwaysStoppedAnimation(
-                    mine ? accent : Colors.white24,
-                  ),
+                  color: bodyInk,
                 ),
               ),
             ],

@@ -9,6 +9,7 @@ import '../../state/app_state.dart';
 class AfterFlow extends StatefulWidget {
   final AppState state;
   const AfterFlow(this.state, {super.key});
+
   @override
   State<AfterFlow> createState() => _AfterFlowState();
 }
@@ -23,14 +24,17 @@ class _AfterFlowState extends State<AfterFlow> {
   String? _error;
 
   List<Member> get _others =>
-      widget.state.group!.members.where((m) => m.id != 'me').toList();
+      widget.state.group!.members.where((member) => member.id != 'me').toList();
 
   Future<void> _next() async {
+    // Empty reflections are rejected before any network work. The database also protects its
+    // shape, but keeping the person on the same step gives them an actionable recovery path.
     if (_step == 0 && _learned.text.trim().isEmpty) {
       setState(() => _error = 'Write one thing that stuck with you.');
       return;
     }
-    final g = widget.state.group!;
+
+    final group = widget.state.group!;
     setState(() {
       _busy = true;
       _error = null;
@@ -38,19 +42,25 @@ class _AfterFlowState extends State<AfterFlow> {
     try {
       if (_step == 0) {
         await widget.state.repo.submitReflection(
-          g.id,
+          group.id,
           _learned.text.trim(),
           wasFallback: _fallback,
         );
       } else if (_step == 1) {
-        await widget.state.repo.submitAttendance(g.id, _showedUp);
+        await widget.state.repo.submitAttendance(group.id, _showedUp);
       } else {
-        await widget.state.repo.selectContacts(g.id, _selected);
+        await widget.state.repo.selectContacts(group.id, _selected);
+        // loadContacts reads the server-derived mutual set and performs the phase transition.
+        // Navigating from the local selection would reveal unreciprocated choices and violate
+        // the privacy contract this flow is specifically meant to preserve.
         await widget.state.loadContacts();
         return;
       }
+
       if (mounted) setState(() => _step++);
     } catch (_) {
+      // Every step is independently durable. Staying put on failure lets a retry upsert the same
+      // record instead of advancing the UI beyond data that never reached the backend.
       if (mounted) setState(() => _error = 'That did not save. Try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -59,6 +69,8 @@ class _AfterFlowState extends State<AfterFlow> {
 
   @override
   void dispose() {
+    // AfterFlow may unmount when loadContacts changes the global phase. Releasing this controller
+    // here avoids retaining its listener and the potentially personal reflection text afterward.
     _learned.dispose();
     super.dispose();
   }
@@ -73,8 +85,8 @@ class _AfterFlowState extends State<AfterFlow> {
           child: LinearProgressIndicator(
             value: (_step + 1) / 3,
             minHeight: 2,
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            valueColor: const AlwaysStoppedAnimation(accent),
+            backgroundColor: line,
+            valueColor: const AlwaysStoppedAnimation(inkDeep),
           ),
         ),
       ),
@@ -104,25 +116,21 @@ class _AfterFlowState extends State<AfterFlow> {
   }
 
   Widget _reflection() {
-    final a = widget.state.assignment;
+    final assignment = widget.state.assignment;
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       children: [
         Text(
           _fallback
               ? 'No problem. What did you learn about anyone else?'
-              : 'What did you learn from ${a?.targetName ?? 'your person'}?',
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            height: 1.25,
-          ),
+              : 'What did you learn from ${assignment?.targetName ?? 'your person'}?',
+          style: Theme.of(context).textTheme.headlineMedium,
         ),
         const SizedBox(height: 8),
         Text(
           'They will see this, and you will see theirs.',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+          style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 20),
         TextField(
@@ -134,11 +142,13 @@ class _AfterFlowState extends State<AfterFlow> {
           ),
         ),
         const SizedBox(height: 16),
-        // The PRD's fallback: if your target did not show, answer about anyone else.
+        // The fallback is intentionally private and changes only the reflection's target. It must
+        // not create a public accusation or skip the reflection just because the assigned person
+        // was absent.
         if (!_fallback)
           TextButton(
             onPressed: () => setState(() => _fallback = true),
-            child: Text('${a?.targetName ?? 'They'} did not show up'),
+            child: Text('${assignment?.targetName ?? 'They'} did not show up'),
           ),
       ],
     );
@@ -147,30 +157,45 @@ class _AfterFlowState extends State<AfterFlow> {
   Widget _attendance() {
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       children: [
-        const Text(
-          'Who made it?',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-        ),
+        Text('Who made it?', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 8),
         Text(
           'Nothing happens to anyone who did not. This just keeps the record honest.',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.55),
-            height: 1.4,
-          ),
+          style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 20),
-        for (final m in _others)
-          SwitchListTile(
-            value: _showedUp[m.id] ?? true,
-            onChanged: (v) => setState(() => _showedUp[m.id] = v),
-            activeThumbColor: accent,
-            contentPadding: EdgeInsets.zero,
-            secondary: Avatar(m.avatar, imageUrl: m.photoUrl),
-            title: Text(m.displayName),
+        Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(cardRadius),
           ),
+          child: Column(
+            children: [
+              for (var i = 0; i < _others.length; i++) ...[
+                SwitchListTile(
+                  value: _showedUp[_others[i].id] ?? true,
+                  onChanged: (value) =>
+                      setState(() => _showedUp[_others[i].id] = value),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  // Photos are signed by the repository because the storage bucket is private.
+                  // The emoji remains Avatar's fallback, not a reason to discard that signed URL.
+                  secondary: Avatar(
+                    _others[i].avatar,
+                    imageUrl: _others[i].photoUrl,
+                  ),
+                  title: Text(_others[i].displayName),
+                ),
+                if (i != _others.length - 1)
+                  const Divider(indent: 72, endIndent: 16),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -178,34 +203,51 @@ class _AfterFlowState extends State<AfterFlow> {
   Widget _contacts() {
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       children: [
-        const Text(
+        Text(
           'Swap numbers with anyone?',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+          style: Theme.of(context).textTheme.headlineMedium,
         ),
         const SizedBox(height: 8),
         Text(
           'Numbers only appear if you both picked each other. Nobody is told they were not '
-          'picked — including you.',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.55),
-            height: 1.4,
-          ),
+          'picked, including you.',
+          style: Theme.of(context).textTheme.bodyLarge,
         ),
         const SizedBox(height: 20),
-        for (final m in _others)
-          CheckboxListTile(
-            value: _selected.contains(m.id),
-            onChanged: (v) => setState(
-              () => v! ? _selected.add(m.id) : _selected.remove(m.id),
-            ),
-            activeColor: accent,
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.trailing,
-            secondary: Avatar(m.avatar, imageUrl: m.photoUrl),
-            title: Text(m.displayName),
+        Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(cardRadius),
           ),
+          child: Column(
+            children: [
+              for (var i = 0; i < _others.length; i++) ...[
+                CheckboxListTile(
+                  value: _selected.contains(_others[i].id),
+                  onChanged: (value) => setState(
+                    () => value!
+                        ? _selected.add(_others[i].id)
+                        : _selected.remove(_others[i].id),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  secondary: Avatar(
+                    _others[i].avatar,
+                    imageUrl: _others[i].photoUrl,
+                  ),
+                  title: Text(_others[i].displayName),
+                ),
+                if (i != _others.length - 1)
+                  const Divider(indent: 72, endIndent: 16),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }

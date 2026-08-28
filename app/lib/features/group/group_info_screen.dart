@@ -13,27 +13,28 @@ class GroupInfoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final g = state.group!;
-    final venue = g.chosenVenue;
+    final group = state.group!;
+    final venue = group.chosenVenue;
     return Scaffold(
       appBar: AppBar(title: const Text('Group')),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
           if (venue == null)
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: surface,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(cardRadius),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.how_to_vote_outlined, size: 18, color: accent),
-                  SizedBox(width: 10),
+                  Icon(Icons.how_to_vote_outlined, size: 20, color: inkDeep),
+                  SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'Voting is still open. The destination appears here after everyone votes.',
+                      style: TextStyle(color: bodyInk, height: 1.45),
                     ),
                   ),
                 ],
@@ -41,25 +42,26 @@ class GroupInfoScreen extends StatelessWidget {
             )
           else
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: surface,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(cardRadius),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.place_outlined, size: 18, color: accent),
+                      const Icon(
+                        Icons.place_outlined,
+                        size: 20,
+                        color: inkDeep,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           venue.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
+                          style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
                     ],
@@ -67,51 +69,63 @@ class GroupInfoScreen extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     venue.address,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
-                    ),
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  const SizedBox(height: 14),
-                  // A map before finalization would turn the first candidate into an implied
-                  // winner. Rendering it only in this branch preserves the vote as the source
-                  // of truth while still retaining the independently-built map feature.
+                  const SizedBox(height: 16),
+                  // A map before finalization gives the first candidate visual authority and
+                  // implies the ballot no longer matters. Postgres' chosen_venue_id is the only
+                  // winning signal, so location details exist exclusively in this branch.
                   VenueMap(venue),
                 ],
               ),
             ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
           Text(
-            '${g.members.length} people',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            '${group.members.length} people',
+            style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 12),
-          for (final m in g.members) _member(m),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(cardRadius),
+            ),
+            child: Column(
+              children: [
+                for (var index = 0; index < group.members.length; index++) ...[
+                  _member(context, group.members[index]),
+                  if (index != group.members.length - 1) const Divider(),
+                ],
+              ],
+            ),
+          ),
           const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _member(Member m) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
+  Widget _member(BuildContext context, Member member) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
     child: Row(
       children: [
-        Avatar(m.avatar, imageUrl: m.photoUrl),
+        // Signed photo URLs are deliberately passed separately from the durable emoji.
+        // The URL may expire between launches; Avatar can then fall back without losing the
+        // member's identity or requiring group info to understand storage refresh policy.
+        Avatar(member.avatar, imageUrl: member.photoUrl),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              m.displayName,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              member.displayName,
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            if (m.tags.isNotEmpty)
+            if (member.tags.isNotEmpty)
               Text(
-                m.tags.join(' · '),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.5),
-                ),
+                member.tags.join(', '),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
           ],
         ),

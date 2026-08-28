@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme.dart';
 import '../../state/app_state.dart';
 
 /// Email OTP, shown only against the real backend. Two steps on one screen: enter an
@@ -124,24 +125,15 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
         children: [
-          const Text(
-            'You go alone. So does everyone else.',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
+          ScreenIntro(
+            'You go alone.\nSo does everyone else.',
             onEmail
-                ? 'Sign in with your email — we send a code, no password.'
+                ? 'Sign in with your email. We send a code, no password.'
                 : 'Enter the six-digit code we sent to $_trimmedEmail.',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 32),
           if (onEmail) ...[
             const _Label('Email'),
             TextField(
@@ -182,7 +174,13 @@ class _AuthScreenState extends State<AuthScreen> {
           ],
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: Color(0xFFE8734A))),
+            Text(
+              _error!,
+              style: const TextStyle(
+                color: negative,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
           const SizedBox(height: 24),
           FilledButton(
@@ -195,7 +193,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     width: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.black,
+                      color: ink,
                     ),
                   )
                 : Text(onEmail ? 'Send code' : 'Verify'),
@@ -225,9 +223,6 @@ class _Label extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      text,
-      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-    ),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
   );
 }

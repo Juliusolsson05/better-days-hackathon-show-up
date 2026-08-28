@@ -32,7 +32,7 @@ class VenueMap extends StatelessWidget {
 
     final target = LatLng(venue.lat!, venue.lng!);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: SizedBox(
         height: height,
         child: Stack(
@@ -66,10 +66,12 @@ class VenueMap extends StatelessWidget {
                 icon: const Icon(Icons.directions, size: 18),
                 label: const Text('Directions'),
                 style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 36),
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  // Directions is a primary physical-world action, so retain the restyle's
+                  // full touch target even though the compact version fits more tightly.
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   backgroundColor: accent,
-                  foregroundColor: Colors.black,
+                  foregroundColor: ink,
                   textStyle: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -99,19 +101,20 @@ Future<void> _openDirections(VenueOption v) async {
 class _Fallback extends StatelessWidget {
   final String address;
   const _Fallback(this.address);
+
   @override
   Widget build(BuildContext context) => Container(
     height: 84,
     decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(12),
-      color: Colors.white.withValues(alpha: 0.05),
+      borderRadius: BorderRadius.circular(16),
+      color: bg,
     ),
     alignment: Alignment.center,
     padding: const EdgeInsets.all(16),
     child: Text(
       address,
       textAlign: TextAlign.center,
-      style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+      style: const TextStyle(color: bodyInk),
     ),
   );
 }

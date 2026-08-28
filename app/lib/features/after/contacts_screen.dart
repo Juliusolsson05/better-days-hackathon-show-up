@@ -16,57 +16,73 @@ class ContactsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Numbers')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         children: [
           if (contacts.isEmpty) ...[
             const SizedBox(height: 60),
-            Center(child: Text('🌱', style: const TextStyle(fontSize: 48))),
+            Center(
+              child: Container(
+                width: 72,
+                height: 72,
+                decoration: const BoxDecoration(
+                  color: accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.eco_outlined, size: 34, color: inkDeep),
+              ),
+            ),
             const SizedBox(height: 20),
-            const Center(
+            Center(
               child: Text(
                 'No matches this time',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
             const SizedBox(height: 10),
             Center(
               child: Text(
                 'You are in the next one automatically.',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+                style: Theme.of(context).textTheme.bodyLarge,
               ),
             ),
           ] else ...[
             Text(
               '${contacts.length} of you picked each other.',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 20),
-            for (final c in contacts)
+            for (final contact in contacts)
               Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: surface,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(cardRadius),
                 ),
                 child: Row(
                   children: [
-                    Avatar(c.avatar, imageUrl: c.photoUrl),
+                    // The repository turns private storage paths into short-lived signed URLs.
+                    // Dropping photoUrl during a visual restyle would silently replace real
+                    // people with emoji even though the privacy-safe image is already loaded.
+                    Avatar(contact.avatar, imageUrl: contact.photoUrl),
                     const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          c.displayName,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        Text(
-                          c.phone,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.6),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            contact.displayName,
+                            style: Theme.of(context).textTheme.titleMedium,
                           ),
-                        ),
-                      ],
+                          Text(
+                            contact.phone,
+                            style: const TextStyle(
+                              color: inkDeep,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -76,12 +92,11 @@ class ContactsScreen extends StatelessWidget {
           Text(
             'The group chat stays open. Nothing here expires.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withValues(alpha: 0.4),
-            ),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
+          // Contacts are a durable endpoint, not a modal dead end. The explicit route back keeps
+          // the still-open group chat reachable after either a mutual match or an empty result.
           OutlinedButton(
             onPressed: () => state.goTo(Phase.matched),
             child: const Text('Back to group chat'),

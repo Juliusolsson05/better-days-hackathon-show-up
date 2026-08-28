@@ -159,22 +159,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: ListView(
         // Scrolling away from a field should close its keyboard.
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
         children: [
-          const Text(
-            'You go alone. So does everyone else.',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
+          const ScreenIntro(
+            'You go alone.\nSo does everyone else.',
             'Four to six people, matched on what you are into.',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 32),
 
           const _Label('What should people call you?'),
           TextField(
@@ -193,10 +184,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const _Label('Your phone number'),
           Text(
             'Only people you choose who also choose you will ever see it.',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 13,
-            ),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 10),
           TextField(
@@ -211,10 +199,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const _Label('Add a photo'),
           Text(
             'A clear photo of you — this is how the group recognizes each other.',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 13,
-            ),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 10),
           Semantics(
@@ -229,7 +214,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   color: surface,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: _photo == null ? Colors.white24 : accent,
+                    color: _photo == null ? ink : positive,
                     width: 2,
                   ),
                   image: _photo == null
@@ -240,10 +225,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         ),
                 ),
                 child: _photo == null
-                    ? const Icon(
-                        Icons.add_a_photo_outlined,
-                        color: Colors.white38,
-                      )
+                    ? const Icon(Icons.add_a_photo_outlined, color: ink)
                     : null,
               ),
             ),
@@ -261,9 +243,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: _avatar == a ? accent : Colors.transparent,
+                        color: _avatar == a ? inkDeep : Colors.transparent,
                         width: 2,
                       ),
+                      color: _avatar == a ? accentPale : Colors.transparent,
                     ),
                     padding: const EdgeInsets.all(2),
                     child: Avatar(a),
@@ -297,7 +280,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   maxLength: 24,
                   textInputAction: TextInputAction.done,
                   decoration: const InputDecoration(
-                    hintText: 'Add your own — anime, pokemon, whatever',
+                    hintText: 'Add your own: anime, pokemon, whatever',
                     isDense: true,
                     counterText: '',
                   ),
@@ -327,6 +310,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const _Label('When are you free?'),
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               for (final s in _slots)
                 FilterChip(
@@ -347,7 +331,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     width: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.black,
+                      color: ink,
                     ),
                   )
                 : const Text('Find me a group'),
@@ -364,9 +348,6 @@ class _Label extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      text,
-      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-    ),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
   );
 }

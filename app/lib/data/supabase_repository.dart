@@ -519,6 +519,23 @@ class SupabaseRepository implements Repository {
   }
 
   @override
+  Future<bool> wasMarkedNoShow(String groupId) async {
+    // attendance_result returns a row per person the group voted on. We look at our own
+    // row only, and require at least two votes so a single early opinion does not tell
+    // someone they flaked. Absent = fewer than half the voters saw you.
+    final rows =
+        await _client.rpc('attendance_result', params: {'grp': groupId})
+            as List;
+    for (final r in rows.cast<Map<String, dynamic>>()) {
+      if (r['subject_id'] != _userId) continue;
+      final showed = (r['showed_up'] as num).toInt();
+      final total = (r['total'] as num).toInt();
+      return total >= 2 && showed * 2 < total;
+    }
+    return false;
+  }
+
+  @override
   Future<void> selectContacts(String groupId, Set<String> selectedIds) async {
     await _client.rpc<void>(
       'set_contact_selections',

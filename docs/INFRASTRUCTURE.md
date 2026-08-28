@@ -249,6 +249,45 @@ clickhouse/001_schema.sql   →  scripts/seed_archetypes.py  →  clickhouse/002
 
 Running the seed before the archetypes exist inserts nothing and reports success.
 
+### 8.1 Supabase Postgres CDC
+
+Supabase remains the managed Postgres provider and the only OLTP database. We do **not** run
+Postgres inside ClickHouse Cloud. The ClickHouse-managed component is ClickPipes, which consumes
+committed logical changes from Supabase's direct database endpoint and writes versioned `cdc_*`
+tables beside the existing vectors and events.
+
+Three different analytical shapes coexist intentionally:
+
+| Shape | Owner | Why |
+|---|---|---|
+| `profile_vectors`, `venue_vectors` | Edge/ingest code | Derived embeddings do not exist in Postgres |
+| `events` | Edge `emit()` | Behavioral facts such as opening a chat are not durable Postgres rows |
+| `cdc_*` | Managed ClickPipes | Durable groups, ballots, attendance, and lifecycle state should not depend on app dual-writes |
+
+Migration `0005_clickhouse_cdc.sql` owns the `show_up_clickhouse` publication and a dormant
+`clickpipes_user`. The role bypasses RLS because replication must see all committed users, but it
+has column-level SELECT only for the analytical allowlist. Names, phone numbers, photo paths,
+message bodies, reflection prose, assignment questions, and venue addresses are not readable by
+the replication login.
+
+The migration deliberately does not create a replication slot. Slots retain WAL while idle, so
+the managed pipe creates its slot only when Terraform provisions a running consumer. A stopped or
+failed pipe is therefore an operational incident: monitor replication lag and retained WAL rather
+than treating it as a harmless disabled integration.
+
+Deployment, after exporting the values listed in `.env.example`:
+
+```bash
+supabase db push
+./scripts/deploy_clickhouse_cdc.sh plan
+./scripts/deploy_clickhouse_cdc.sh apply
+```
+
+Terraform targets the existing ClickHouse service, uses `type = "supabase"`, and consumes the
+direct `db.<project-ref>.supabase.co:5432` endpoint. Supabase's transaction pooler is not compatible
+with the logical replication protocol. The apply finishes by installing deduplicated
+`analytics_*_current` views and comparing all ten source/destination row counts.
+
 ---
 
 ## 9. "Why not just use pgvector?"
@@ -287,6 +326,8 @@ wants ClickHouse, and once ClickHouse is there the scan belongs next to the anal
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | The Flutter app, via `--dart-define`. Public by design |
 | `SUPABASE_SERVICE_ROLE_KEY` | Function secrets only. **Never** in the app |
 | `CLICKHOUSE_URL/USER/PASSWORD` | Function secrets only |
+| `CLICKHOUSE_CLOUD_API_KEY/API_SECRET` | Operator environment only; ClickPipes control plane |
+| `CLICKPIPES_POSTGRES_PASSWORD` | Operator environment only; dedicated replication login |
 | `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY` | Function secrets only |
 
 ```bash
@@ -325,5 +366,8 @@ Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 - [ ] ⚠ Run `scripts/seed_archetypes.py` **before** the seed SQL
 - [ ] Run `clickhouse/002_seed.sql` and **read its final sanity check** — if nearest and
       farthest are within ~0.03, mean-centering is broken and every match is noise
+- [ ] `./scripts/deploy_clickhouse_cdc.sh plan` and review all ten table mappings/exclusions
+- [ ] `./scripts/deploy_clickhouse_cdc.sh apply`
+- [ ] ⚠ Monitor the ClickPipe state and source replication-slot WAL retention
 - [ ] ⚠ Set the Xcode signing team so a build reaches the physical iPhone
 - [ ] `flutter run` with both `--dart-define`s

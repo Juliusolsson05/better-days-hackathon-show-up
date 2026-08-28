@@ -40,9 +40,10 @@ CDC complements rather than replaces the existing ClickHouse paths:
 1. Add the Postgres publication and schema assertions. Prove that required tables and
    identity columns are present and that sensitive columns cannot drift into the
    publication unnoticed.
-2. Add an idempotent source bootstrap that grants the minimum ClickPipes permissions and
-   creates the logical replication slot only at deployment time. An inactive slot must
-   never be created by an ordinary schema migration because it retains WAL indefinitely.
+2. Add a dormant migration-owned role with the minimum column grants, plus an idempotent
+   source bootstrap that supplies its secret and activates replication immediately before
+   apply. Let the managed pipe create its logical slot only when the consumer is provisioned;
+   an inactive slot must never come from an ordinary migration because it retains WAL.
 3. Declare the managed Postgres CDC ClickPipe with the official ClickHouse Terraform
    provider. Mirror the publication allowlist in table mappings and column exclusions so
    a configuration review shows the whole data boundary.
@@ -55,8 +56,9 @@ CDC complements rather than replaces the existing ClickHouse paths:
 
 - Apply the Postgres migration before creating the pipe, then bootstrap the source login
   and apply Terraform with environment-provided secrets.
-- Start with the ClickPipe stopped when credentials are being validated; start only after
-  its table mappings and exclusions match the tested contract.
+- Run a Terraform plan before apply so the table mappings and exclusions are reviewed.
+  ClickHouse currently requires a new CDC pipe to start running when created, so the source
+  role and publication must already be complete before apply.
 - Pausing or deleting the ClickPipe does not affect the application. Drop a replication
   slot only after confirming no subscriber uses it; otherwise the safe rollback is to
   pause the pipe while preserving its resume position.
@@ -72,4 +74,3 @@ CDC complements rather than replaces the existing ClickHouse paths:
   later migration cannot update one boundary while silently forgetting the others.
 - A live smoke check compares per-table source and deduplicated destination counts after
   Terraform apply without printing row content or credentials.
-

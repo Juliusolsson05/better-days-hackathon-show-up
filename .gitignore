@@ -13,3 +13,6 @@ supabase/.temp
 .vscode/
 
 .env.functions
+
+__pycache__/
+*.pyc

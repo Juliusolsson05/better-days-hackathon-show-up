@@ -68,14 +68,43 @@ const lit = (x: string | number) =>
   typeof x === 'number' ? String(x) : `'${x.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 export const arr = (xs: readonly (string | number)[]) => `[${xs.map(lit).join(',')}]`;
 
-/** The population centroid, cached per function instance -- it changes only on reseed. */
-let meanCache: number[] | null = null;
-export async function populationMean(): Promise<number[]> {
-  if (meanCache) return meanCache;
-  const { rows } = await ch<{ mean: number[] }>('SELECT mean FROM embedding_mean LIMIT 1');
-  if (!rows.length) throw new Error('embedding_mean is empty -- run clickhouse/002_seed.sql');
-  meanCache = rows[0].mean;
-  return meanCache;
+/**
+ * Nested arrays, for Array(Array(Float32)) -- the venue query scores one venue against every
+ * member in a single pass, so it passes all six member vectors as one parameter. arr() only
+ * flattens one level, which fails as a ClickHouse parse error rather than a type error.
+ */
+export const arr2 = (xss: readonly (readonly number[])[]) =>
+  `[${xss.map((xs) => arr(xs)).join(',')}]`;
+
+/**
+ * Population centroids, cached per function instance -- they change only on reseed.
+ *
+ * There are two, and using the wrong one is the most expensive silent bug in this system.
+ * id=1 is the mean of profile text, id=2 the mean of venue text. They are different domains
+ * with different means: centring venues on the profile mean leaves every venue carrying the
+ * same domain-gap offset, which makes one venue win for every group. See docs/VENUE_PIPELINE
+ * section 3.5.
+ */
+export const PROFILE_CENTROID = 1;
+export const VENUE_CENTROID = 2;
+
+const meanCache = new Map<number, number[]>();
+export async function populationMean(id: number = PROFILE_CENTROID): Promise<number[]> {
+  const hit = meanCache.get(id);
+  if (hit) return hit;
+  const { rows } = await ch<{ mean: number[] }>(
+    'SELECT mean FROM embedding_mean WHERE id = {id:UInt8} LIMIT 1',
+    { id },
+  );
+  if (!rows.length) {
+    throw new Error(
+      id === VENUE_CENTROID
+        ? 'venue centroid missing -- run scripts/ingest_venues.py'
+        : 'embedding_mean is empty -- run clickhouse/002_seed.sql',
+    );
+  }
+  meanCache.set(id, rows[0].mean);
+  return rows[0].mean;
 }
 
 /**

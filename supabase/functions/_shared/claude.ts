@@ -9,7 +9,11 @@
 
 import Anthropic from 'npm:@anthropic-ai/sdk@0.71.0';
 import { z } from 'npm:zod@3.24.1';
-import { zodOutputFormat } from 'npm:@anthropic-ai/sdk@0.71.0/helpers/zod';
+// Structured output lives under `beta` in this SDK version: betaZodOutputFormat +
+// client.beta.messages.parse + `output_format`. The non-beta client.messages.parse does not
+// exist here and fails at RUNTIME with "not a function" -- nothing type-checks this repo,
+// so it surfaces as a 500 from inside a sweep rather than at deploy.
+import { betaZodOutputFormat } from 'npm:@anthropic-ai/sdk@0.71.0/helpers/beta/zod';
 
 const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
 
@@ -27,10 +31,10 @@ export type ProfileTags = z.infer<typeof ProfileTags>;
 
 /** Simple classification -- low effort is the right setting and keeps it fast. */
 export async function extractTags(passion: string, tags: string[]): Promise<ProfileTags> {
-  const res = await client.messages.parse({
+  const res = await client.beta.messages.parse({
     model: 'claude-opus-5',
     max_tokens: 2000,
-    output_config: { format: zodOutputFormat(ProfileTags), effort: 'low' },
+    output_format: betaZodOutputFormat(ProfileTags),
     messages: [{
       role: 'user',
       content: `Self-selected tags: ${tags.join(', ')}\n\nWhat they are passionate about:\n${passion}`,
@@ -67,13 +71,15 @@ export async function planGroup(
   members: { user_id: string; display_name: string; passion: string; tags: string[] }[],
   city: string,
 ): Promise<GroupPlan> {
-  const res = await client.messages.parse({
+  const res = await client.beta.messages.parse({
     model: 'claude-opus-5',
     max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    // effort medium: thinking tokens count against max_tokens, and at high effort the
-    // structured object can be truncated mid-write, which surfaces as parsed_output null.
-    output_config: { format: zodOutputFormat(GroupPlan), effort: 'medium' },
+    // Thinking tokens count against max_tokens, and a structured object truncated mid-write
+    // surfaces as a null parsed_output rather than an error -- hence the explicit budget well
+    // under max_tokens, leaving room for the object itself. ('adaptive' is not a valid type
+    // in this SDK version; only 'enabled' and 'disabled'.)
+    thinking: { type: 'enabled', budget_tokens: 6000 },
+    output_format: betaZodOutputFormat(GroupPlan),
     messages: [{
       role: 'user',
       content: `City: ${city}\n\n${members.map((m) =>

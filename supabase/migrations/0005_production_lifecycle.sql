@@ -8,6 +8,8 @@
 --
 -- Both facts live beside their source data so app restarts and a different device reach the
 -- same decision without receiving the private phone column or guessing from nullable rows.
+-- This exact version is already recorded by the hosted database, so keeping it in Git is part of
+-- the deployment contract: later migrations and fresh environments must share one ordering.
 
 -- Existing demo profiles may predate phone capture. NOT VALID preserves those rows during the
 -- deadline upgrade while still rejecting every new insert and every future update that would

@@ -29,6 +29,12 @@ jobs:
         with:
           version: latest
 
+      # The managed ClickPipe is executable infrastructure, not deployment prose. Validation in
+      # the same product-contract job catches provider-schema drift before a production apply.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.8"
+
       # scripts/check.sh uses ripgrep to discover tests and scripts rather than maintaining a
       # second file manifest that drifts as agents add modules. GitHub's Ubuntu image does not
       # promise rg even though every development machine currently has it.
@@ -43,6 +49,15 @@ jobs:
 
       - name: Check every runtime contract
         run: ./scripts/check.sh
+
+      # Supabase and the pinned ClickHouse parser image together consume enough of GitHub's
+      # runner disk that Flutter can fail while writing app.dill even though the build is healthy.
+      # The contract gate has finished using both containers at this point, so release their
+      # layers before Gradle expands the Android toolchain and release artifact.
+      - name: Reclaim container disk before Android release
+        run: |
+          supabase stop --no-backup
+          docker system prune --all --force --volumes
 
       - name: Build Android release artifact
         working-directory: app

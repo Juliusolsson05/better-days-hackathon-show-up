@@ -1,30 +1,32 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:showup/main.dart';
+import 'package:showup/app.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('onboarding gates submit until the profile is complete', (tester) async {
+    // Onboarding is a tall ListView; the default 800x600 surface leaves the submit button
+    // unbuilt, so the finder sees nothing rather than a disabled button.
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpWidget(const ShowUpApp());
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // The one decision this product asks for should not be reachable from an empty form:
+    // an unmatchable profile is worse than no profile.
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+
+    await tester.enterText(find.byType(TextField).first, 'Julius');
+    await tester.enterText(
+        find.byType(TextField).last, 'I boulder four times a week and read routes badly.');
+    await tester.tap(find.text('climbing'));
+    await tester.pump();
+
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
+
+    // MockRepository.signIn() simulates latency; let it land before the tree is torn
+    // down, or the binding fails the test on a pending timer.
+    await tester.pump(const Duration(seconds: 1));
   });
 }

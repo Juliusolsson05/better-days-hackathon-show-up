@@ -36,9 +36,11 @@ rewrite look absent even though the later reference shell is present.
 ## Implementation decision
 
 The pinned mock omits display name, phone, passion prose, and availability even though the live
-profile contract requires all four. The exact three-step port therefore replaces onboarding only
-when `referenceUiPreview` is enabled, which app bootstrap already restricts to `MockRepository`.
-The live Supabase path retains its complete form until those private fields receive an approved
-design. Reference completion still calls `Repository.submitProfile` with mock-only placeholders so
-the remainder of `AppState` observes the same completion boundary instead of gaining a second,
-presentation-only state transition.
+profile contract requires all four. User review established that the free-form passion input and
+custom interests are essential matching inputs, so they are integrated into the approved interest
+and photo steps rather than dropped for visual purity. The exact three-step presentation still
+replaces onboarding only when `referenceUiPreview` is enabled, which app bootstrap already
+restricts to `MockRepository`; display name, phone, and availability remain mock placeholders until
+those private fields receive an approved design. Reference completion calls
+`Repository.submitProfile` so the remainder of `AppState` observes the same completion boundary
+instead of gaining a second, presentation-only state transition.

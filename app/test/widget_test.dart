@@ -31,6 +31,7 @@ void main() {
     expect(find.text('What would you actually show up for?'), findsOneWidget);
     expect(find.text('Slow coffee'), findsOneWidget);
     expect(find.text('Live music'), findsOneWidget);
+    expect(find.text('Add your own interest'), findsOneWidget);
 
     // The reference requires two interests, so one selection cannot advance the flow.
     await tester.tap(find.text('Slow coffee'));
@@ -44,6 +45,7 @@ void main() {
 
     expect(find.text('Add a photo'), findsOneWidget);
     expect(find.text('Tap to upload'), findsOneWidget);
+    expect(find.text('What are you passionate about?'), findsOneWidget);
     expect(find.text('Find my table'), findsOneWidget);
   });
 
@@ -71,12 +73,21 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Slow coffee'));
-    await tester.tap(find.text('Live music'));
+    await tester.enterText(
+      find.byKey(const Key('custom-interest-input')),
+      'Robotics',
+    );
+    await tester.tap(find.byKey(const Key('add-custom-interest')));
     await tester.pump();
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tap to upload'));
     await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('about-yourself-input')),
+      'I build small robots and can talk about hardware all night.',
+    );
+    await tester.pump();
     await tester.tap(find.text('Find my table'));
     // This focused harness does not include app.dart's ListenableBuilder, so the completed
     // phase cannot replace the still-spinning onboarding route. Advance through the mock network
@@ -85,7 +96,11 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(state.phase, Phase.home);
-    expect(state.me?.tags, containsAll(<String>['slow-coffee', 'live-music']));
+    expect(state.me?.tags, containsAll(<String>['slow-coffee', 'robotics']));
+    expect(
+      state.me?.passion,
+      'I build small robots and can talk about hardware all night.',
+    );
   });
 
   testWidgets('production onboarding still requires private profile fields', (

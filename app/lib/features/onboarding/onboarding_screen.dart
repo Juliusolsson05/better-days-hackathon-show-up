@@ -388,14 +388,68 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
   var _step = 0;
   final _picked = <String>{};
+  final _customInterests = <String>[];
+  final _customInterest = TextEditingController();
+  final _about = TextEditingController();
   XFile? _photo;
   var _busy = false;
 
   bool get _canContinue => switch (_step) {
     0 => true,
     1 => _picked.length >= 2,
-    _ => _photo != null,
+    _ => _photo != null && _about.text.trim().length > 10,
   };
+
+  void _addCustomInterest() {
+    final raw = _customInterest.text
+        .trim()
+        .replaceFirst(RegExp(r'^#+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (raw.isEmpty) return;
+
+    final normalized = raw.toLowerCase();
+    for (final interest in _interests) {
+      if (interest.label.toLowerCase() != normalized) continue;
+      setState(() {
+        _picked.add(interest.id);
+        _customInterest.clear();
+      });
+      return;
+    }
+
+    String? existing;
+    for (final interest in _customInterests) {
+      if (interest.toLowerCase() == normalized) {
+        existing = interest;
+        break;
+      }
+    }
+    if (existing != null) {
+      setState(() {
+        _picked.add(normalized);
+        _customInterest.clear();
+      });
+      return;
+    }
+    if (_customInterests.length >= 8) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('That is plenty of interests to match on.'),
+          ),
+        );
+      return;
+    }
+
+    final label = raw.length > 24 ? raw.substring(0, 24) : raw;
+    setState(() {
+      _customInterests.add(label);
+      _picked.add(label.toLowerCase());
+      _customInterest.clear();
+    });
+  }
 
   Future<void> _pickPhoto() async {
     if (_busy) return;
@@ -431,19 +485,15 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
     setState(() => _busy = true);
     try {
-      final selectedLabels = [
-        for (final interest in _interests)
-          if (_picked.contains(interest.id)) interest.label,
-      ];
       // The reference shell is backed exclusively by MockRepository. It still receives a real
-      // Profile so the rest of AppState observes the same completion boundary as production, but
-      // mock-only placeholders fill fields the approved three-step design deliberately omits.
-      // This must never become a shortcut for Supabase; referenceUiPreview is gated to mocks in
-      // app.dart specifically to preserve that invariant.
+      // Profile so the rest of AppState observes the same completion boundary as production.
+      // Only identity/contact/availability remain mock placeholders; interests, free-form matching
+      // prose, and the photo are genuine user inputs because losing any of those would make the
+      // reference UX demonstrate a different matching product.
       final profile = await widget.state.repo.submitProfile(
         displayName: 'You',
         avatar: '🙂',
-        passion: selectedLabels.join(', '),
+        passion: _about.text.trim(),
         tags: _picked.toList(growable: false),
         city: 'SF',
         availability: const ['fri_eve'],
@@ -462,6 +512,13 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
           ),
         );
     }
+  }
+
+  @override
+  void dispose() {
+    _customInterest.dispose();
+    _about.dispose();
+    super.dispose();
   }
 
   @override
@@ -508,6 +565,9 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                     0 => const _ReferenceWelcomeStep(),
                     1 => _ReferenceInterestsStep(
                       picked: _picked,
+                      customInterests: _customInterests,
+                      customInterestController: _customInterest,
+                      onAddCustomInterest: _addCustomInterest,
                       onToggle: (id) => setState(
                         () => _picked.contains(id)
                             ? _picked.remove(id)
@@ -516,6 +576,8 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                     ),
                     _ => _ReferencePhotoStep(
                       photo: _photo,
+                      aboutController: _about,
+                      onAboutChanged: (_) => setState(() {}),
                       onPick: _pickPhoto,
                       onClear: () => setState(() => _photo = null),
                     ),
@@ -588,9 +650,18 @@ class _ReferenceWelcomeStep extends StatelessWidget {
 }
 
 class _ReferenceInterestsStep extends StatelessWidget {
-  const _ReferenceInterestsStep({required this.picked, required this.onToggle});
+  const _ReferenceInterestsStep({
+    required this.picked,
+    required this.customInterests,
+    required this.customInterestController,
+    required this.onAddCustomInterest,
+    required this.onToggle,
+  });
 
   final Set<String> picked;
+  final List<String> customInterests;
+  final TextEditingController customInterestController;
+  final VoidCallback onAddCustomInterest;
   final ValueChanged<String> onToggle;
 
   @override
@@ -611,17 +682,69 @@ class _ReferenceInterestsStep extends StatelessWidget {
         const SizedBox(height: 16),
         Expanded(
           child: SingleChildScrollView(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final interest in _ReferenceOnboardingState._interests)
-                  _ReferenceInterestChip(
-                    emoji: interest.emoji,
-                    label: interest.label,
-                    selected: picked.contains(interest.id),
-                    onTap: () => onToggle(interest.id),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final interest in _ReferenceOnboardingState._interests)
+                      _ReferenceInterestChip(
+                        emoji: interest.emoji,
+                        label: interest.label,
+                        selected: picked.contains(interest.id),
+                        onTap: () => onToggle(interest.id),
+                      ),
+                    for (final interest in customInterests)
+                      _ReferenceInterestChip(
+                        emoji: '✦',
+                        label: interest,
+                        selected: picked.contains(interest.toLowerCase()),
+                        onTap: () => onToggle(interest.toLowerCase()),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Something else?',
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('custom-interest-input'),
+                        controller: customInterestController,
+                        onSubmitted: (_) => onAddCustomInterest(),
+                        maxLength: 24,
+                        textInputAction: TextInputAction.done,
+                        decoration: const InputDecoration(
+                          hintText: 'Add your own interest',
+                          counterText: '',
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      key: const Key('add-custom-interest'),
+                      onPressed: onAddCustomInterest,
+                      style: IconButton.styleFrom(
+                        backgroundColor: accent,
+                        foregroundColor: ink,
+                      ),
+                      icon: const Icon(Icons.add),
+                      tooltip: 'Add interest',
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -684,16 +807,21 @@ class _ReferenceInterestChip extends StatelessWidget {
 class _ReferencePhotoStep extends StatelessWidget {
   const _ReferencePhotoStep({
     required this.photo,
+    required this.aboutController,
+    required this.onAboutChanged,
     required this.onPick,
     required this.onClear,
   });
 
   final XFile? photo;
+  final TextEditingController aboutController;
+  final ValueChanged<String> onAboutChanged;
   final VoidCallback onPick;
   final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context) => SingleChildScrollView(
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
     padding: const EdgeInsets.only(top: 32),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -762,6 +890,34 @@ class _ReferencePhotoStep extends StatelessWidget {
             ),
           ),
         ],
+        const SizedBox(height: 20),
+        const Text(
+          'What are you passionate about?',
+          style: TextStyle(
+            color: ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'The thing you could talk about all night. This helps us match your table.',
+          style: TextStyle(color: bodyInk, fontSize: 12, height: 1.4),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('about-yourself-input'),
+          controller: aboutController,
+          onChanged: onAboutChanged,
+          minLines: 3,
+          maxLines: 4,
+          maxLength: 280,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+            hintText: 'Tell us what lights you up…',
+            alignLabelWithHint: true,
+          ),
+        ),
       ],
     ),
   );

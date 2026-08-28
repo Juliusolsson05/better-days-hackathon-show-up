@@ -3,6 +3,15 @@ import 'package:showup/data/supabase_row_decoders.dart';
 import 'package:showup/models/models.dart';
 
 void main() {
+  test('venue pipeline status is decoded from its durable database value', () {
+    expect(decodeVenueStatus('pending'), VenueStatus.pending);
+    expect(decodeVenueStatus('voting'), VenueStatus.voting);
+    expect(decodeVenueStatus('chosen'), VenueStatus.chosen);
+    expect(decodeVenueStatus('failed'), VenueStatus.failed);
+    expect(decodeVenueStatus('legacy'), VenueStatus.legacy);
+    expect(() => decodeVenueStatus('unknown'), throwsFormatException);
+  });
+
   test('membership rows preserve UUIDs except for the local me sentinel', () {
     final me = decodeMemberRow(
       {

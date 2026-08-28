@@ -62,13 +62,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // avoids presenting a modal before this route owns a valid Navigator context.
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
 
-    if (widget.state.group!.chosenVenueId == null) {
+    if (widget.state.group!.venueNeedsRefresh) {
       // Ballots are private, so an earlier voter receives no realtime row when somebody else's
       // final vote selects the winner. Poll the small shared Group projection instead of making
       // private votes observable merely to trigger UI. The final voter refreshes immediately;
       // everyone else converges within ten seconds.
       _groupRefresh = Timer.periodic(const Duration(seconds: 10), (_) {
-        if (widget.state.group?.chosenVenueId != null) {
+        if (widget.state.group?.venueNeedsRefresh != true) {
           _groupRefresh?.cancel();
           return;
         }
@@ -110,7 +110,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _refreshingGroup = true;
     try {
       await widget.state.refreshGroup();
-      if (widget.state.group?.chosenVenueId != null) _groupRefresh?.cancel();
+      if (widget.state.group?.venueNeedsRefresh != true) {
+        _groupRefresh?.cancel();
+      }
     } catch (_) {
       // Chat remains live while this best-effort projection refresh retries on the next tick.
     } finally {

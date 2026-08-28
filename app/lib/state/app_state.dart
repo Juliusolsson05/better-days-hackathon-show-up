@@ -47,6 +47,13 @@ class AppState extends ChangeNotifier {
   Assignment? assignment;
   List<MutualContact> contacts = const [];
 
+  /// Group ids whose automatic ladder handoff has already started in this app-state lifetime.
+  ///
+  /// Restoration and a notification tap can race through separate group-loading paths. Marking the
+  /// attempt before launching its Future prevents two permission prompts and two schedules, while
+  /// [armLadder] itself remains public so the explicit compressed demo control can still rerun it.
+  final _automaticLadderAttempts = <String>{};
+
   /// Reconstruct the durable phase after a process restart. Auth restoration alone is not enough:
   /// a verified user may still need onboarding, while an onboarded user may be waiting or already
   /// matched. Keeping this decision here stops the app shell from duplicating repository reads.
@@ -130,6 +137,7 @@ class AppState extends ChangeNotifier {
         ? await repo.hasCompletedAfterFlow(group!.id)
         : false;
     phase = reflectionIsDue && !completed ? Phase.after : Phase.matched;
+    if (!reflectionIsDue) _armLadderOnce();
   }
 
   /// Group formation and the chat opening are the same event -- there is no lobby.
@@ -142,6 +150,12 @@ class AppState extends ChangeNotifier {
     // Arm the ladder only once the user is actually looking at their group. Asking for
     // notification permission at launch, before they know what the app is, is how you get
     // a denial -- and on iOS a denial is close to permanent.
+    _armLadderOnce();
+  }
+
+  void _armLadderOnce() {
+    final groupId = group?.id;
+    if (groupId == null || !_automaticLadderAttempts.add(groupId)) return;
     unawaited(armLadder());
   }
 

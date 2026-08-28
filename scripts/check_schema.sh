@@ -21,6 +21,10 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when to_regprocedure(
+          'public.complete_profile_submission(uuid,uuid,timestamp with time zone)'
+        ) is not null then '0011'
+     when to_regprocedure('public.was_marked_no_show(uuid)') is not null then '0010'
      when to_regprocedure('public.submit_reflection(uuid,text,boolean)') is not null
           and not has_table_privilege('authenticated', 'public.profiles', 'update') then '0009'
      when to_regprocedure('public.submit_reflection(uuid,text,boolean)') is not null then '0008'
@@ -57,8 +61,10 @@ case "$SCHEMA_STATE" in
   0007) SCHEMA_RANK=7 ;;
   0008) SCHEMA_RANK=8 ;;
   0009) SCHEMA_RANK=9 ;;
+  0010) SCHEMA_RANK=10 ;;
+  0011) SCHEMA_RANK=11 ;;
   *)
-    echo "local database is not a recognized 0001 through 0009 Show Up schema"
+    echo "local database is not a recognized 0001 through 0011 Show Up schema"
     exit 1
     ;;
 esac
@@ -86,6 +92,8 @@ if [[ -f supabase/migrations/0007_clickhouse_cdc.sql ]] && (( SCHEMA_RANK < 7 ))
 fi
 if (( SCHEMA_RANK < 8 )); then PSQL_FILES+=(-f supabase/migrations/0008_reflection_submission.sql); fi
 if (( SCHEMA_RANK < 9 )); then PSQL_FILES+=(-f supabase/migrations/0009_profile_write_boundary.sql); fi
+if (( SCHEMA_RANK < 10 )); then PSQL_FILES+=(-f supabase/migrations/0010_post_meetup_write_boundary.sql); fi
+if (( SCHEMA_RANK < 11 )); then PSQL_FILES+=(-f supabase/migrations/0011_profile_submission_version.sql); fi
 
 # Every suite runs against the final in-transaction shape. Older tests protect invariants shared by
 # later migrations, while 0008/0009 specifically exercise the two write doors that moved behind
@@ -101,6 +109,8 @@ fi
 PSQL_FILES+=(
   -f supabase/tests/0008_reflection_submission.sql
   -f supabase/tests/0009_profile_write_boundary.sql
+  -f supabase/tests/0010_post_meetup_write_boundary.sql
+  -f supabase/tests/0011_profile_submission_version.sql
 )
 
 psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \

@@ -65,7 +65,9 @@ Deno.serve(async (req) => {
     );
 
     const { data: pool, error: poolErr } = await db.from("profiles")
-      .select("id, display_name, passion, tags")
+      .select(
+        "id, display_name, passion, tags, embedded_at, embedding_submission_id",
+      )
       .eq("city", city)
       .contains("availability", [slot])
       .not("embedded_at", "is", null);
@@ -86,6 +88,7 @@ Deno.serve(async (req) => {
     );
     const skipped: string[] = [];
     const formed: string[] = [];
+    const readinessRepaired: string[] = [];
     let lastStats = { elapsed: 0, rows_read: 0, bytes_read: 0 };
 
     while (unassigned.size >= MIN_GROUP) {
@@ -103,7 +106,21 @@ Deno.serve(async (req) => {
         { self: seed },
       );
       if (!self.length) {
-        // embedded_at was set but the ClickHouse write did not land. Skip, don't die.
+        // Postgres readiness without its ClickHouse representation traps a restored app after
+        // onboarding while making matching silently skip it forever. Clear only the submission we
+        // observed: a concurrent resubmission changes the UUID before doing external work, so this
+        // repair cannot erase readiness belonging to a newer successful request.
+        let repair = db.from("profiles").update({ embedded_at: null })
+          .eq("id", seed)
+          .eq("embedded_at", unassigned.get(seed)!.embedded_at);
+        const submissionId = unassigned.get(seed)!.embedding_submission_id;
+        if (submissionId) {
+          repair = repair.eq("embedding_submission_id", submissionId);
+        }
+        const { data: repaired, error: repairErr } = await repair.select("id")
+          .maybeSingle();
+        if (repairErr) throw repairErr;
+        if (repaired) readinessRepaired.push(seed);
         skipped.push(seed);
         continue;
       }
@@ -374,6 +391,7 @@ Deno.serve(async (req) => {
       venue_existing: groupsWithBallots.size,
       venue_ready: venueReady,
       venue_failures: venueFailures,
+      readiness_repaired: readinessRepaired.length,
       stats: lastStats,
     }, { headers: CORS });
   } catch (err) {

@@ -151,7 +151,7 @@ class SupabaseRepository implements Repository {
     // below does not serialize the network round trips.
     final groupFuture = _client
         .from('groups')
-        .select('id,event_at,venue,activity,chosen_venue_id')
+        .select('id,event_at,venue,activity,chosen_venue_id,venue_status')
         .eq('id', groupId)
         .single();
     final memberRowsFuture = _client
@@ -189,8 +189,9 @@ class SupabaseRepository implements Repository {
         memberRows[i]['user_id'] as String: members[i],
     };
 
+    final venueStatus = decodeVenueStatus(groupRow['venue_status']);
     final venues = venueRows.map(decodeVenueOptionRow).toList(growable: true);
-    if (venues.isEmpty) {
+    if (venues.isEmpty && venueStatus == VenueStatus.legacy) {
       final legacy = decodeLegacyVenue(groupRow['venue'], groupId);
       if (legacy != null) venues.add(legacy);
     }
@@ -210,6 +211,7 @@ class SupabaseRepository implements Repository {
       venueOptions: venues,
       activity: groupRow['activity'] as String,
       chosenVenueId: nullableString(groupRow['chosen_venue_id']),
+      venueStatus: venueStatus,
     );
   }
 
@@ -588,19 +590,14 @@ class SupabaseRepository implements Repository {
 
   @override
   Future<bool> wasMarkedNoShow(String groupId) async {
-    // attendance_result returns a row per person the group voted on. We look at our own
-    // row only, and require at least two votes so a single early opinion does not tell
-    // someone they flaked. Absent = fewer than half the voters saw you.
-    final rows =
-        await _client.rpc('attendance_result', params: {'grp': groupId})
-            as List;
-    for (final r in rows.cast<Map<String, dynamic>>()) {
-      if (r['subject_id'] != _userId) continue;
-      final showed = (r['showed_up'] as num).toInt();
-      final total = (r['total'] as num).toInt();
-      return total >= 2 && showed * 2 < total;
-    }
-    return false;
+    // The caller needs one private verdict, not the group's attendance aggregate. Keeping the
+    // filter in Postgres means another client cannot remove a Dart-side predicate and inspect who
+    // peers marked absent; it also keeps this repository aligned with migration 0010, which revokes
+    // the wider attendance_result protocol entirely.
+    return await _client.rpc<bool>(
+      'was_marked_no_show',
+      params: {'grp': groupId},
+    );
   }
 
   @override

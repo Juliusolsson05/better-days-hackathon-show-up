@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS profile_vectors
     energy       LowCardinality(String),
     indoor       Bool,
     alcohol_ok   Bool,
-    updated_at   DateTime DEFAULT now()
+    submission_id UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    updated_at   DateTime64(6) DEFAULT now64(6)
 )
 ENGINE = ReplacingMergeTree(updated_at)
 -- Ordered by user_id alone so re-embedding a profile replaces it instead of appending a

@@ -11,6 +11,7 @@ import { extractTags } from "../_shared/claude.ts";
 import { normalizeStanceTags } from "../_shared/matching.ts";
 import {
   assertOwnedProfilePhotoPath,
+  assertProfilePhotoUploaded,
   parseProfileSubmission,
   ProfileSubmissionError,
 } from "../_shared/profile_submission.ts";
@@ -56,24 +57,40 @@ Deno.serve(async (req) => {
     const body = parseProfileSubmission(input);
     assertOwnedProfilePhotoPath(body.photo_url, uid);
 
-    const { error: upErr } = await db.from("profiles").upsert({
-      id: uid,
-      display_name: body.display_name,
-      avatar: body.avatar,
-      passion: body.passion,
-      tags: body.tags,
-      city: body.city,
-      availability: body.availability,
-      phone: body.phone,
-      photo_url: body.photo_url,
-      // Postgres is the readiness gate used by matching. An edit must become temporarily
-      // unmatchable before external work starts; otherwise a failed Voyage/Claude/ClickHouse
-      // call leaves a newly edited OLTP profile stamped ready while ClickHouse still contains
-      // its old vector. Keeping the row with a null stamp also makes first-submit failures
-      // safely retryable instead of stranding the user behind a half-created profile.
-      embedded_at: null,
+    // Checking the exact owner directory before mutating Postgres makes "photo required" a real
+    // server invariant. The path check alone only proves what the file would be named if it existed.
+    const { data: photoObjects, error: photoErr } = await db.storage.from(
+      "photos",
+    ).list(uid, {
+      limit: 2,
+      search: "profile.jpg",
     });
-    if (upErr) throw upErr;
+    if (photoErr) throw photoErr;
+    assertProfilePhotoUploaded(photoObjects);
+
+    const submissionId = crypto.randomUUID();
+    // The database assigns a strictly increasing per-user version while clearing readiness. Slow
+    // external work happens after that short transaction, and the token later makes the stamp a
+    // compare-and-set instead of letting an older overlapping request certify newer profile data.
+    const { data: submissionVersion, error: beginErr } = await db.rpc(
+      "begin_profile_submission",
+      {
+        p_user_id: uid,
+        p_submission_id: submissionId,
+        p_display_name: body.display_name,
+        p_avatar: body.avatar,
+        p_passion: body.passion,
+        p_tags: body.tags,
+        p_city: body.city,
+        p_availability: body.availability,
+        p_phone: body.phone,
+        p_photo_url: body.photo_url,
+      },
+    );
+    if (beginErr) throw beginErr;
+    if (typeof submissionVersion !== "string") {
+      throw new Error("begin_profile_submission returned no version");
+    }
 
     // Embedding and tag extraction are independent -- no reason to pay for them serially.
     const [vectors, tags, mean] = await Promise.all([
@@ -91,11 +108,13 @@ Deno.serve(async (req) => {
     // accumulating duplicate rows for the same person.
     await ch(
       `INSERT INTO profile_vectors
-         (user_id, embedding, tags, city, availability, energy, indoor, alcohol_ok)
+         (user_id, embedding, tags, city, availability, energy, indoor, alcohol_ok,
+          submission_id, updated_at)
        VALUES
          ({user_id:UUID}, {embedding:Array(Float32)}, {tags:Array(String)},
           {city:String}, {availability:Array(String)}, {energy:String},
-          {indoor:Bool}, {alcohol_ok:Bool})`,
+          {indoor:Bool}, {alcohol_ok:Bool}, {submission_id:UUID},
+          parseDateTime64BestEffort({submission_version:String}, 6))`,
       {
         user_id: uid,
         embedding: arr(vec),
@@ -113,12 +132,25 @@ Deno.serve(async (req) => {
         energy: tags.energy,
         indoor: tags.indoor,
         alcohol_ok: tags.alcohol_ok,
+        submission_id: submissionId,
+        submission_version: submissionVersion,
       },
     );
 
-    const { error: stampErr } = await db.from("profiles")
-      .update({ embedded_at: new Date().toISOString() }).eq("id", uid);
+    const { data: stamped, error: stampErr } = await db.rpc(
+      "complete_profile_submission",
+      {
+        p_user_id: uid,
+        p_submission_id: submissionId,
+        p_submission_version: submissionVersion,
+      },
+    );
     if (stampErr) throw stampErr;
+    if (stamped !== true) {
+      return Response.json({ error: "profile submission was superseded" }, {
+        status: 409,
+      });
+    }
     // At this point Postgres and ClickHouse agree that the profile is ready. Analytics is an
     // observer of that fact, not another participant in the commit: surfacing an event-stream
     // outage as a 500 made the app invite a retry that temporarily cleared embedded_at and paid
@@ -129,7 +161,10 @@ Deno.serve(async (req) => {
         topics: tags.topics,
       });
     } catch (analyticsErr) {
-      console.error("profile committed but signup analytics was dropped", analyticsErr);
+      console.error(
+        "profile committed but signup analytics was dropped",
+        analyticsErr,
+      );
     }
 
     return Response.json({ ok: true, tags });

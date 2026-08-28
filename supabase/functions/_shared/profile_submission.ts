@@ -148,3 +148,15 @@ export function assertOwnedProfilePhotoPath(
     invalid("photo_url", "expected the authenticated user profile path");
   }
 }
+
+/** Prove the path names a real object, not merely an object the caller would be allowed to own. */
+export function assertProfilePhotoUploaded(
+  objects: readonly { name: string }[] | null,
+): void {
+  // Storage ownership policies cannot require an object to exist before its path is persisted in
+  // Postgres. Without this separate check a direct function caller can become matchable with a
+  // permanently broken group photo by submitting the one syntactically valid path.
+  if (!objects?.some((object) => object.name === "profile.jpg")) {
+    invalid("photo_url", "required profile photo has not been uploaded");
+  }
+}

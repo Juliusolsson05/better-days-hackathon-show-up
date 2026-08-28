@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 
 import {
   assertOwnedProfilePhotoPath,
+  assertProfilePhotoUploaded,
   parseProfileSubmission,
   ProfileSubmissionError,
 } from "./profile_submission.ts";
@@ -34,6 +35,17 @@ Deno.test("profile submission preserves the complete client contract", () => {
     phone: "+14155550123",
     photo_url: `${USER_ID}/profile.jpg`,
   });
+});
+
+Deno.test("profile readiness requires the owned Storage object to exist", () => {
+  assertProfilePhotoUploaded([{ name: "profile.jpg" }]);
+  for (const objects of [null, [], [{ name: "profile.jpg.tmp" }]]) {
+    assertThrows(
+      () => assertProfilePhotoUploaded(objects),
+      ProfileSubmissionError,
+      "has not been uploaded",
+    );
+  }
 });
 
 Deno.test("every persisted profile field is required at the API boundary", () => {

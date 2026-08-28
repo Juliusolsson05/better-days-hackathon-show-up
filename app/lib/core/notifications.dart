@@ -446,10 +446,10 @@ class NotificationService with WidgetsBindingObserver {
   }
 
   String _body(Rung rung, Group g) {
-    final venue =
-        g.chosenVenue ??
-        (g.venueOptions.isNotEmpty ? g.venueOptions.first : null);
-    final place = venue?.name ?? 'the venue';
+    // A candidate is not a destination. These strings are materialized when the OS schedule is
+    // created and cannot be edited by a later server vote, so naming option one before Postgres has
+    // chosen it can literally send somebody to the wrong place three days later.
+    final venue = g.chosenVenue;
     final others = g.members
         .where((m) => m.id != 'me')
         .map((m) => m.displayName)
@@ -458,25 +458,35 @@ class NotificationService with WidgetsBindingObserver {
 
     switch (rung) {
       case Rung.reveal:
-        return '${g.members.length} people, '
-            '${DateFormat('h:mm a').format(g.eventAt)} at $place. In or out?';
+        final time = DateFormat('h:mm a').format(g.eventAt);
+        return venue == null
+            ? '${g.members.length} people, $time. In or out?'
+            : '${g.members.length} people, $time at ${venue.name}. In or out?';
       case Rung.confirm:
         return others.isEmpty
             ? 'The chat is open if you want to say hi.'
             : '${_names(others)}. The chat is open if you want to say hi.';
       case Rung.morning:
-        return '$place, ${venue?.address ?? ''}. '
+        if (venue == null) {
+          return '${others.length} people are coming. Open the group chat for the destination.';
+        }
+        return '${venue.name}, ${venue.address}. '
                 '${others.length} people are coming.'
             .trim();
       case Rung.doorway:
         // The hardest moment in the product: walking alone into a room of strangers is
         // where people turn around and go home. Naming a place and one person converts
         // "find a group of strangers" into "find a table", which is a smaller task.
-        return 'Look for the long table at $place — $first is already there.';
+        return venue == null
+            ? 'Open the group chat for the destination — look for $first when you arrive.'
+            : 'Look for the long table at ${venue.name} — $first is already there.';
       case Rung.reflect:
         return 'One question about what $first said. Takes a minute.';
     }
   }
+
+  @visibleForTesting
+  String notificationBody(Rung rung, Group group) => _body(rung, group);
 
   String _names(List<String> names) {
     if (names.length <= 2) return names.join(' and ');

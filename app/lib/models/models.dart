@@ -72,12 +72,21 @@ class VenueOption {
   bool get hasLocation => lat != null && lng != null;
 }
 
+/// The server-owned venue pipeline state.
+///
+/// This is intentionally not inferred from nullable option/result rows. Group formation, venue
+/// retrieval, and vote finalization are separate transactions, so an empty projection can mean
+/// "not ready", "failed", or "this group predates voting". Postgres records that distinction and
+/// Flutter must preserve it or a legacy display venue can accidentally become a writable ballot.
+enum VenueStatus { pending, voting, chosen, failed, legacy }
+
 class Group {
   final String id;
   final DateTime eventAt;
   final List<Member> members;
   final List<VenueOption> venueOptions;
   final String? chosenVenueId;
+  final VenueStatus venueStatus;
   final String activity;
   const Group({
     required this.id,
@@ -86,9 +95,27 @@ class Group {
     required this.venueOptions,
     required this.activity,
     this.chosenVenueId,
-  });
+    VenueStatus? venueStatus,
+  }) : venueStatus =
+           venueStatus ??
+           (chosenVenueId == null ? VenueStatus.voting : VenueStatus.chosen);
+
+  /// Only typed options in the explicit voting state accept a ballot.
+  ///
+  /// In particular, a legacy venue also lives in [venueOptions] so the existing map/avatar
+  /// presentation can be reused, but its synthetic `legacy:<group>` id is not a Postgres UUID and
+  /// must never cross the vote API boundary.
+  bool get venueVoteOpen =>
+      venueStatus == VenueStatus.voting && chosenVenueId == null;
+
+  /// Whether polling can still reveal a meaningful venue transition.
+  bool get venueNeedsRefresh =>
+      venueStatus == VenueStatus.pending || venueStatus == VenueStatus.voting;
 
   VenueOption? get chosenVenue {
+    if (venueStatus == VenueStatus.legacy) {
+      return venueOptions.isEmpty ? null : venueOptions.first;
+    }
     if (chosenVenueId == null) return null;
     // Group finalization and option projection are separate reads. During a deploy, retry, or
     // stale mobile cache the winning id can arrive before its option row; crashing every chat

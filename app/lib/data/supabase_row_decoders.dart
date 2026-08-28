@@ -36,6 +36,14 @@ VenueOption decodeVenueOptionRow(Map<String, dynamic> row) => VenueOption(
   lng: _double(row['lng']),
 );
 
+VenueStatus decodeVenueStatus(Object? value) {
+  final name = _string(value);
+  for (final status in VenueStatus.values) {
+    if (status.name == name) return status;
+  }
+  throw FormatException('Expected a known venue_status, got $value');
+}
+
 /// Groups created before grounded retrieval keep one JSON venue. It is decoded only when no
 /// typed options exist, so an in-flight deployment can upgrade without blanking the map.
 VenueOption? decodeLegacyVenue(Object? value, String groupId) {

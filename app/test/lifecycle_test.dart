@@ -129,6 +129,37 @@ void main() {
     },
   );
 
+  test(
+    'restored matched groups arm the notification ladder only once',
+    () async {
+      final repo = _OtpRepository(
+        profileExists: true,
+        restoredGroup: _futureGroup(),
+      );
+      addTearDown(repo.dispose);
+      var permissionRequests = 0;
+      var schedules = 0;
+      final state = AppState(
+        repo,
+        requestNotificationPermission: () async {
+          permissionRequests++;
+          return true;
+        },
+        scheduleNotificationLadder: (group, {demo = false}) async {
+          schedules++;
+        },
+      );
+
+      await state.restore();
+      await state.restore();
+      await pumpEventQueue();
+
+      expect(state.phase, Phase.matched);
+      expect(permissionRequests, 1);
+      expect(schedules, 1);
+    },
+  );
+
   test('OTP keeps a genuinely new user in onboarding', () async {
     final repo = _OtpRepository(profileExists: false);
     addTearDown(repo.dispose);

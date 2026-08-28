@@ -13,6 +13,35 @@ Group _group() => Group(
 );
 
 void main() {
+  test(
+    'unchosen venue candidates never leak into durable notification copy',
+    () {
+      final group = Group(
+        id: 'open-vote',
+        eventAt: DateTime(2030, 1, 1, 19),
+        members: const [Member(id: 'me', displayName: 'You', avatar: '🙂')],
+        venueOptions: const [
+          VenueOption(
+            id: 'candidate-one',
+            name: 'Wrong Place If Option Two Wins',
+            address: '1 Candidate St',
+            pitch: '',
+            categories: [],
+          ),
+        ],
+        venueStatus: VenueStatus.voting,
+        activity: 'Conversation',
+      );
+
+      for (final rung in [Rung.reveal, Rung.morning, Rung.doorway]) {
+        expect(
+          NotificationService.instance.notificationBody(rung, group),
+          isNot(contains('Wrong Place If Option Two Wins')),
+        );
+      }
+    },
+  );
+
   group('ladder ordering', () {
     // Every rung is an offset from eventAt, so a careless edit to one Duration reorders
     // the ladder without any error. The user then gets "Tonight at 7" the day before,

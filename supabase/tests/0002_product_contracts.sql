@@ -99,7 +99,7 @@ begin
     end;
 
     select public.form_group(
-        now() + interval '3 days',
+        now() - interval '3 days',
         '{"name":"Legacy One","address":"1 Test St"}'::jsonb,
         'talk',
         0.1,
@@ -111,7 +111,7 @@ begin
     ) into g1;
 
     select public.form_group(
-        now() + interval '4 days',
+        now() - interval '4 days',
         '{"name":"Legacy Two","address":"2 Test St"}'::jsonb,
         'walk',
         0.2,

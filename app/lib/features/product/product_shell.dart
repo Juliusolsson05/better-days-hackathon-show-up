@@ -391,8 +391,17 @@ class _GroupHubScreenState extends State<GroupHubScreen> {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) =>
-                            GroupChatMockScreen(dayOf: widget.dayOf),
+                        builder: (_) => GroupChatMockScreen(
+                          dayOf: widget.dayOf,
+                          // A locked or day-of group has already resolved its ballot. Passing the
+                          // destination through the route prevents chat from reopening a vote that
+                          // the immediately preceding group screen says is finished.
+                          resolvedVenue: widget.dayOf
+                              ? referenceVenues[1]
+                              : widget.locked
+                              ? referenceVenues[0]
+                              : null,
+                        ),
                       ),
                     ),
                   ),
@@ -813,8 +822,13 @@ class _VenueDetailScreenState extends State<VenueDetailScreen> {
 }
 
 class GroupChatMockScreen extends StatefulWidget {
-  const GroupChatMockScreen({super.key, this.dayOf = false});
+  const GroupChatMockScreen({
+    super.key,
+    this.dayOf = false,
+    this.resolvedVenue,
+  });
   final bool dayOf;
+  final ReferenceVenue? resolvedVenue;
   @override
   State<GroupChatMockScreen> createState() => _GroupChatMockScreenState();
 }
@@ -850,10 +864,13 @@ class _GroupChatMockScreenState extends State<GroupChatMockScreen> {
                   'hey! so nervous but also excited. first one of these for me.',
                 ),
                 const SizedBox(height: 16),
-                _ChatVenueVote(
-                  vote: vote,
-                  onVote: (id) => setState(() => vote = id),
-                ),
+                if (widget.resolvedVenue case final venue?)
+                  _ChatResolvedVenue(venue)
+                else
+                  _ChatVenueVote(
+                    vote: vote,
+                    onVote: (id) => setState(() => vote = id),
+                  ),
                 const SizedBox(height: 16),
                 _ChatBubble(
                   referenceMembers[2],
@@ -1152,6 +1169,64 @@ class _ChatVenueVote extends StatelessWidget {
               ),
             ),
           ),
+      ],
+    ),
+  );
+}
+
+class _ChatResolvedVenue extends StatelessWidget {
+  const _ChatResolvedVenue(this.venue);
+  final ReferenceVenue venue;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: surface,
+      border: Border.all(color: line),
+      borderRadius: BorderRadius.circular(24),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "WHERE YOU'RE MEETING",
+          style: TextStyle(
+            color: mutedInk,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.4,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.asset(
+                venue.photo,
+                width: 58,
+                height: 58,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(venue.name, style: displayStyle(16)),
+                  const SizedBox(height: 3),
+                  Text(
+                    venue.blurb,
+                    style: const TextStyle(fontSize: 12, color: mutedInk),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.check_circle, color: positive, size: 20),
+          ],
+        ),
       ],
     ),
   );

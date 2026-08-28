@@ -124,7 +124,7 @@ clickhouse client --host <host> --secure --password <pw> < clickhouse/001_schema
 python scripts/seed_archetypes.py
 clickhouse client --host <host> --secure --password <pw> < clickhouse/002_seed.sql
 
-# After `supabase db push` has installed migration 0005 and the CDC env values are exported:
+# After `supabase db push` has installed migration 0007 and the CDC env values are exported:
 ./scripts/deploy_clickhouse_cdc.sh plan
 ./scripts/deploy_clickhouse_cdc.sh apply
 

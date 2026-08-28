@@ -1,9 +1,9 @@
 -- Waitlist capture for the public landing page.
 --
--- Numbered 0003, not 0002: the product-model migration is in flight on another branch and
--- owns that number. Taking it here would produce a merge conflict in the one place where a
--- conflict is genuinely dangerous -- two different migrations claiming the same ordinal
--- apply in an undefined order.
+-- This was originally numbered 0003 while product-contract work was on another branch. The
+-- deployed database is now the source of truth for migration identity: product contracts own
+-- 0003, chat owns 0004, production lifecycle owns 0005, and this waitlist is recorded as 0006.
+-- Renaming the repository file preserves that history instead of attempting a dangerous repair.
 --
 -- NOT YET APPLIED. Until someone runs `supabase db push`, the landing page's waitlist route
 -- returns a 503 and the form says so, rather than reporting a success it did not achieve.

@@ -37,7 +37,7 @@ psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
 do $$
 begin
     if not exists (select 1 from pg_roles where rolname = 'clickpipes_user') then
-        raise exception 'run migration 0005_clickhouse_cdc before configuring ClickPipes';
+        raise exception 'run migration 0007_clickhouse_cdc before configuring ClickPipes';
     end if;
 end
 $$;
@@ -52,7 +52,7 @@ select format('alter role clickpipes_user password %L', :'clickpipes_password') 
 do $$
 begin
     if not exists (select 1 from pg_publication where pubname = 'show_up_clickhouse') then
-        raise exception 'run migration 0005_clickhouse_cdc before configuring ClickPipes';
+        raise exception 'run migration 0007_clickhouse_cdc before configuring ClickPipes';
     end if;
 end
 $$;

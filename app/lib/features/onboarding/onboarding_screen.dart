@@ -17,8 +17,18 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   static const _interests = [
-    'climbing', 'music', 'photography', 'baking', 'chess', 'running',
-    'anime', 'gardening', 'board games', 'cycling', 'pottery', 'birding',
+    'climbing',
+    'music',
+    'photography',
+    'baking',
+    'chess',
+    'running',
+    'anime',
+    'gardening',
+    'board games',
+    'cycling',
+    'pottery',
+    'birding',
   ];
   static const _avatars = ['🧗', '🎧', '📷', '🍞', '♟️', '🏃', '🌱', '🎨'];
   static const _slots = ['fri_eve', 'sat_day', 'sat_eve', 'sun_day'];
@@ -38,8 +48,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   // treat it as optional. Left non-blocking here pending a team call; the upload path is
   // fully wired either way (see SupabaseRepository._uploadPhoto).
   bool get _valid =>
-      _name.text.trim().isNotEmpty && _passion.text.trim().length > 10 &&
-      _picked.isNotEmpty && _avail.isNotEmpty;
+      _name.text.trim().isNotEmpty &&
+      _passion.text.trim().length > 10 &&
+      _picked.isNotEmpty &&
+      _avail.isNotEmpty;
 
   static const _maxExtraTags = 8;
 
@@ -55,7 +67,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } catch (_) {
       // Permission denied, or the picker channel threw. Nothing actionable to show
       // beyond letting them try again.
-      if (mounted) _toast('Could not open your photos. Check the app permission.');
+      if (mounted)
+        _toast('Could not open your photos. Check the app permission.');
     }
   }
 
@@ -89,20 +102,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() => _busy = true);
     try {
       final p = await widget.state.repo.submitProfile(
-        displayName: _name.text.trim(), avatar: _avatar,
-        passion: _passion.text.trim(), tags: _picked.toList(),
-        city: 'SF', availability: _avail.toList(),
+        displayName: _name.text.trim(),
+        avatar: _avatar,
+        passion: _passion.text.trim(),
+        tags: _picked.toList(),
+        city: 'SF',
+        availability: _avail.toList(),
         photoPath: _photo?.path,
       );
       await widget.state.completeOnboarding(p);
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      final offline = e.toString().toLowerCase().contains('socket') ||
+      final offline =
+          e.toString().toLowerCase().contains('socket') ||
           e.toString().toLowerCase().contains('clientexception');
-      _toast(offline
-          ? "Couldn't reach the server. Check your connection and try again."
-          : "Couldn't create your profile. Give it another go.");
+      _toast(
+        offline
+            ? "Couldn't reach the server. Check your connection and try again."
+            : "Couldn't create your profile. Give it another go.",
+      );
     }
   }
 
@@ -127,14 +146,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: ListView(
         // Scrolling away from a field should close its keyboard.
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
         children: [
-          const Text('You go alone. So does everyone else.',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, height: 1.2)),
-          const SizedBox(height: 8),
-          Text('Four to six people, matched on what you are into.',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-          const SizedBox(height: 28),
+          const ScreenIntro(
+            'You go alone.\nSo does everyone else.',
+            'Four to six people, matched on what you are into.',
+          ),
+          const SizedBox(height: 32),
 
           const _Label('What should people call you?'),
           TextField(
@@ -143,13 +161,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             maxLength: 40,
             textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(hintText: 'First name', counterText: ''),
+            decoration: const InputDecoration(
+              hintText: 'First name',
+              counterText: '',
+            ),
           ),
           const SizedBox(height: 24),
 
           const _Label('Add a photo'),
-          Text('Anything but your face — a view, a plant, your dog.',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+          Text(
+            'Anything but your face: a view, a plant, your dog.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 10),
           Semantics(
             button: true,
@@ -163,14 +186,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   color: surface,
                   shape: BoxShape.circle,
                   border: Border.all(
-                      color: _photo == null ? Colors.white24 : accent, width: 2),
+                    color: _photo == null ? ink : positive,
+                    width: 2,
+                  ),
                   image: _photo == null
                       ? null
                       : DecorationImage(
-                          image: FileImage(File(_photo!.path)), fit: BoxFit.cover),
+                          image: FileImage(File(_photo!.path)),
+                          fit: BoxFit.cover,
+                        ),
                 ),
                 child: _photo == null
-                    ? const Icon(Icons.add_a_photo_outlined, color: Colors.white38)
+                    ? const Icon(Icons.add_a_photo_outlined, color: ink)
                     : null,
               ),
             ),
@@ -178,50 +205,63 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 24),
 
           const _Label('Pick a chat icon'),
-          Wrap(spacing: 10, children: [
-            for (final a in _avatars)
-              GestureDetector(
-                onTap: () => setState(() => _avatar = a),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _avatar == a ? accent : Colors.transparent, width: 2),
+          Wrap(
+            spacing: 10,
+            children: [
+              for (final a in _avatars)
+                GestureDetector(
+                  onTap: () => setState(() => _avatar = a),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _avatar == a ? inkDeep : Colors.transparent,
+                        width: 2,
+                      ),
+                      color: _avatar == a ? accentPale : Colors.transparent,
+                    ),
+                    padding: const EdgeInsets.all(2),
+                    child: Avatar(a),
                   ),
-                  padding: const EdgeInsets.all(2),
-                  child: Avatar(a),
                 ),
-              ),
-          ]),
+            ],
+          ),
           const SizedBox(height: 24),
 
           const _Label('What are you into?'),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final i in [..._interests, ..._extraTags])
-              FilterChip(
-                label: Text(i),
-                selected: _picked.contains(i),
-                onSelected: (v) => setState(() => v ? _picked.add(i) : _picked.remove(i)),
-              ),
-          ]),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final i in [..._interests, ..._extraTags])
+                FilterChip(
+                  label: Text(i),
+                  selected: _picked.contains(i),
+                  onSelected: (v) =>
+                      setState(() => v ? _picked.add(i) : _picked.remove(i)),
+                ),
+            ],
+          ),
           const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _customTag,
-                onSubmitted: (_) => _addCustomTag(),
-                maxLength: 24,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(
-                  hintText: 'Add your own — anime, pokemon, whatever',
-                  isDense: true,
-                  counterText: '',
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customTag,
+                  onSubmitted: (_) => _addCustomTag(),
+                  maxLength: 24,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    hintText: 'Add your own: anime, pokemon, whatever',
+                    isDense: true,
+                    counterText: '',
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(onPressed: _addCustomTag, icon: const Icon(Icons.add)),
-          ]),
+              const SizedBox(width: 8),
+              IconButton(onPressed: _addCustomTag, icon: const Icon(Icons.add)),
+            ],
+          ),
           const SizedBox(height: 24),
 
           // The free-text field is what the embedding is actually built from.
@@ -233,26 +273,39 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             onChanged: (_) => setState(() {}),
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
-              hintText: 'The thing you would talk about all night if someone let you.'),
+              hintText:
+                  'The thing you would talk about all night if someone let you.',
+            ),
           ),
           const SizedBox(height: 24),
 
           const _Label('When are you free?'),
-          Wrap(spacing: 8, children: [
-            for (final s in _slots)
-              FilterChip(
-                label: Text(s.replaceAll('_', ' ')),
-                selected: _avail.contains(s),
-                onSelected: (v) => setState(() => v ? _avail.add(s) : _avail.remove(s)),
-              ),
-          ]),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in _slots)
+                FilterChip(
+                  label: Text(s.replaceAll('_', ' ')),
+                  selected: _avail.contains(s),
+                  onSelected: (v) =>
+                      setState(() => v ? _avail.add(s) : _avail.remove(s)),
+                ),
+            ],
+          ),
           const SizedBox(height: 32),
 
           FilledButton(
             onPressed: _valid && !_busy ? _submit : null,
             child: _busy
-                ? const SizedBox(height: 20, width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ink,
+                    ),
+                  )
                 : const Text('Find me a group'),
           ),
         ],
@@ -266,7 +319,7 @@ class _Label extends StatelessWidget {
   const _Label(this.text);
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      );
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
+  );
 }

@@ -11,36 +11,50 @@ class NoShowSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-              color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-        ),
-        const SizedBox(height: 24),
-        const Icon(Icons.nightlight_round, size: 34, color: accent),
-        const SizedBox(height: 16),
-        const Text('You missed the last one',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 10),
-        Text(
-          "That's completely fine. Nothing happens, nobody was told, and you're in the "
-          'next group automatically.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 14, height: 1.5, color: Colors.white.withValues(alpha: 0.6)),
-        ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Got it'),
+      padding: const EdgeInsets.fromLTRB(24, 14, 24, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: line,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
-        ),
-      ]),
+          const SizedBox(height: 28),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(
+              color: accentPale,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.nightlight_round, size: 30, color: inkDeep),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'You missed the last one',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "That's completely fine. Nothing happens, nobody was told, and you're in the "
+            'next group automatically.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Got it'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

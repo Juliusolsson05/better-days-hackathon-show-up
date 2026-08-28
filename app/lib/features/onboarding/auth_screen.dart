@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme.dart';
 import '../../state/app_state.dart';
 
 /// Email OTP, shown only against the real backend. Two steps on one screen: enter an
@@ -60,10 +61,13 @@ class _AuthScreenState extends State<AuthScreen> {
     if (s.contains('otp_expired') || s.contains('expired')) {
       return 'That code has expired. Send a new one.';
     }
-    if (s.contains('invalid') || s.contains('token has expired or is invalid')) {
+    if (s.contains('invalid') ||
+        s.contains('token has expired or is invalid')) {
       return "That code doesn't match. Check it and try again.";
     }
-    if (s.contains('rate limit') || s.contains('too many') || s.contains('429')) {
+    if (s.contains('rate limit') ||
+        s.contains('too many') ||
+        s.contains('429')) {
       return 'Too many attempts. Wait a minute, then try again.';
     }
     return 'Something went wrong. Try again.';
@@ -80,11 +84,11 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _sendCode() => _run(() async {
-        await widget.state.sendEmailOtp(_trimmedEmail);
-        if (!mounted) return;
-        setState(() => _step = _Step.code);
-        _startCooldown();
-      });
+    await widget.state.sendEmailOtp(_trimmedEmail);
+    if (!mounted) return;
+    setState(() => _step = _Step.code);
+    _startCooldown();
+  });
 
   Future<void> _verify() =>
       _run(() => widget.state.verifyEmailOtp(_trimmedEmail, _code.text.trim()));
@@ -121,18 +125,15 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
         children: [
-          const Text('You go alone. So does everyone else.',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, height: 1.2)),
-          const SizedBox(height: 8),
-          Text(
+          ScreenIntro(
+            'You go alone.\nSo does everyone else.',
             onEmail
-                ? 'Sign in with your email — we send a code, no password.'
+                ? 'Sign in with your email. We send a code, no password.'
                 : 'Enter the six-digit code we sent to $_trimmedEmail.',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 32),
           if (onEmail) ...[
             const _Label('Email'),
             TextField(
@@ -156,19 +157,30 @@ class _AuthScreenState extends State<AuthScreen> {
               maxLength: 6,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               autofillHints: const [AutofillHints.oneTimeCode],
-              decoration: const InputDecoration(hintText: '123456', counterText: ''),
+              decoration: const InputDecoration(
+                hintText: '123456',
+                counterText: '',
+              ),
             ),
             const SizedBox(height: 8),
             TextButton(
               onPressed: canResend ? _sendCode : null,
-              child: Text(_resendIn > 0
-                  ? 'Send a new code (${_resendIn}s)'
-                  : 'Send a new code'),
+              child: Text(
+                _resendIn > 0
+                    ? 'Send a new code (${_resendIn}s)'
+                    : 'Send a new code',
+              ),
             ),
           ],
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: Color(0xFFE8734A))),
+            Text(
+              _error!,
+              style: const TextStyle(
+                color: negative,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
           const SizedBox(height: 24),
           FilledButton(
@@ -179,7 +191,10 @@ class _AuthScreenState extends State<AuthScreen> {
                 ? const SizedBox(
                     height: 20,
                     width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: ink,
+                    ),
                   )
                 : Text(onEmail ? 'Send code' : 'Verify'),
           ),
@@ -207,7 +222,7 @@ class _Label extends StatelessWidget {
   const _Label(this.text);
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      );
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
+  );
 }

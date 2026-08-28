@@ -96,7 +96,7 @@ class MockRepository implements Repository {
         Message(
           id: 'm0', authorId: 'system', authorName: '', avatar: '',
           body: 'Six of you matched on climbing, music and making things. '
-              'Pick a spot below — votes are anonymous.',
+              'Pick a spot below. Votes are anonymous.',
           sentAt: DateTime.now().subtract(const Duration(minutes: 5)),
           kind: MessageKind.system,
         ),

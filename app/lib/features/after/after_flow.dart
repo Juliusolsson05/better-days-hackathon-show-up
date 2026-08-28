@@ -28,8 +28,11 @@ class _AfterFlowState extends State<AfterFlow> {
     final g = widget.state.group!;
     setState(() => _busy = true);
     if (_step == 0) {
-      await widget.state.repo
-          .submitReflection(g.id, _learned.text.trim(), wasFallback: _fallback);
+      await widget.state.repo.submitReflection(
+        g.id,
+        _learned.text.trim(),
+        wasFallback: _fallback,
+      );
     } else if (_step == 1) {
       await widget.state.repo.submitAttendance(g.id, _showedUp);
     } else {
@@ -37,7 +40,10 @@ class _AfterFlowState extends State<AfterFlow> {
       await widget.state.loadContacts();
       return;
     }
-    setState(() { _step++; _busy = false; });
+    setState(() {
+      _step++;
+      _busy = false;
+    });
   }
 
   @override
@@ -48,9 +54,10 @@ class _AfterFlowState extends State<AfterFlow> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(2),
           child: LinearProgressIndicator(
-            value: (_step + 1) / 3, minHeight: 2,
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            valueColor: const AlwaysStoppedAnimation(accent),
+            value: (_step + 1) / 3,
+            minHeight: 2,
+            backgroundColor: line,
+            valueColor: const AlwaysStoppedAnimation(inkDeep),
           ),
         ),
       ),
@@ -70,81 +77,127 @@ class _AfterFlowState extends State<AfterFlow> {
   Widget _reflection() {
     final a = widget.state.assignment;
     return ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.all(20),
-        children: [
-      Text(
-        _fallback
-            ? 'No problem. What did you learn about anyone else?'
-            : 'What did you learn from ${a?.targetName ?? 'your person'}?',
-        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, height: 1.25),
-      ),
-      const SizedBox(height: 8),
-      Text('They will see this, and you will see theirs.',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.55))),
-      const SizedBox(height: 20),
-      TextField(
-        controller: _learned, maxLines: 5, autofocus: true,
-        decoration: const InputDecoration(hintText: 'Whatever stuck with you.'),
-      ),
-      const SizedBox(height: 16),
-      // The PRD's fallback: if your target did not show, answer about anyone else.
-      if (!_fallback)
-        TextButton(
-          onPressed: () => setState(() => _fallback = true),
-          child: Text('${a?.targetName ?? 'They'} did not show up'),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.all(24),
+      children: [
+        Text(
+          _fallback
+              ? 'No problem. What did you learn about anyone else?'
+              : 'What did you learn from ${a?.targetName ?? 'your person'}?',
+          style: Theme.of(context).textTheme.headlineMedium,
         ),
-    ]);
+        const SizedBox(height: 8),
+        Text(
+          'They will see this, and you will see theirs.',
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 20),
+        TextField(
+          controller: _learned,
+          maxLines: 5,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Whatever stuck with you.',
+          ),
+        ),
+        const SizedBox(height: 16),
+        // The PRD's fallback: if your target did not show, answer about anyone else.
+        if (!_fallback)
+          TextButton(
+            onPressed: () => setState(() => _fallback = true),
+            child: Text('${a?.targetName ?? 'They'} did not show up'),
+          ),
+      ],
+    );
   }
 
   Widget _attendance() {
     return ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.all(20),
-        children: [
-      const Text('Who made it?',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 8),
-      Text('Nothing happens to anyone who did not. This just keeps the record honest.',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.55), height: 1.4)),
-      const SizedBox(height: 20),
-      for (final m in _others)
-        SwitchListTile(
-          value: _showedUp[m.id] ?? true,
-          onChanged: (v) => setState(() => _showedUp[m.id] = v),
-          activeThumbColor: accent,
-          contentPadding: EdgeInsets.zero,
-          secondary: Avatar(m.avatar),
-          title: Text(m.displayName),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.all(24),
+      children: [
+        Text('Who made it?', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        Text(
+          'Nothing happens to anyone who did not. This just keeps the record honest.',
+          style: Theme.of(context).textTheme.bodyLarge,
         ),
-    ]);
+        const SizedBox(height: 20),
+        Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(cardRadius),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < _others.length; i++) ...[
+                SwitchListTile(
+                  value: _showedUp[_others[i].id] ?? true,
+                  onChanged: (v) =>
+                      setState(() => _showedUp[_others[i].id] = v),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  secondary: Avatar(_others[i].avatar),
+                  title: Text(_others[i].displayName),
+                ),
+                if (i != _others.length - 1)
+                  const Divider(indent: 72, endIndent: 16),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _contacts() {
     return ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.all(20),
-        children: [
-      const Text('Swap numbers with anyone?',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 8),
-      Text(
-        'Numbers only appear if you both picked each other. Nobody is told they were not '
-        'picked — including you.',
-        style: TextStyle(color: Colors.white.withValues(alpha: 0.55), height: 1.4),
-      ),
-      const SizedBox(height: 20),
-      for (final m in _others)
-        CheckboxListTile(
-          value: _selected.contains(m.id),
-          onChanged: (v) => setState(
-              () => v! ? _selected.add(m.id) : _selected.remove(m.id)),
-          activeColor: accent,
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.trailing,
-          secondary: Avatar(m.avatar),
-          title: Text(m.displayName),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.all(24),
+      children: [
+        Text(
+          'Swap numbers with anyone?',
+          style: Theme.of(context).textTheme.headlineMedium,
         ),
-    ]);
+        const SizedBox(height: 8),
+        Text(
+          'Numbers only appear if you both picked each other. Nobody is told they were not '
+          'picked, including you.',
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 20),
+        Container(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(cardRadius),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < _others.length; i++) ...[
+                CheckboxListTile(
+                  value: _selected.contains(_others[i].id),
+                  onChanged: (v) => setState(
+                    () => v!
+                        ? _selected.add(_others[i].id)
+                        : _selected.remove(_others[i].id),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  secondary: Avatar(_others[i].avatar),
+                  title: Text(_others[i].displayName),
+                ),
+                if (i != _others.length - 1)
+                  const Divider(indent: 72, endIndent: 16),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

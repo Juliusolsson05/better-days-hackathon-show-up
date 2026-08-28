@@ -32,45 +32,53 @@ class VenueMap extends StatelessWidget {
 
     final target = LatLng(venue.lat!, venue.lng!);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: SizedBox(
         height: height,
-        child: Stack(children: [
-          AppleMap(
-            initialCameraPosition: CameraPosition(target: target, zoom: 15.5),
-            annotations: {
-              Annotation(
-                annotationId: AnnotationId(venue.id),
-                position: target,
-                infoWindow: InfoWindow(title: venue.name, snippet: venue.address),
-              ),
-            },
-            // The map is a locator, not a toy. Gestures off keeps it from stealing scroll
-            // from the list it sits inside, which on a phone is the difference between the
-            // page scrolling and the page feeling broken.
-            scrollGesturesEnabled: false,
-            zoomGesturesEnabled: false,
-            rotateGesturesEnabled: false,
-            pitchGesturesEnabled: false,
-            myLocationEnabled: false,
-          ),
-          Positioned(
-            right: 8,
-            bottom: 8,
-            child: FilledButton.icon(
-              onPressed: () => _openDirections(venue),
-              icon: const Icon(Icons.directions, size: 18),
-              label: const Text('Directions'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 36),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                backgroundColor: accent,
-                foregroundColor: Colors.black,
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        child: Stack(
+          children: [
+            AppleMap(
+              initialCameraPosition: CameraPosition(target: target, zoom: 15.5),
+              annotations: {
+                Annotation(
+                  annotationId: AnnotationId(venue.id),
+                  position: target,
+                  infoWindow: InfoWindow(
+                    title: venue.name,
+                    snippet: venue.address,
+                  ),
+                ),
+              },
+              // The map is a locator, not a toy. Gestures off keeps it from stealing scroll
+              // from the list it sits inside, which on a phone is the difference between the
+              // page scrolling and the page feeling broken.
+              scrollGesturesEnabled: false,
+              zoomGesturesEnabled: false,
+              rotateGesturesEnabled: false,
+              pitchGesturesEnabled: false,
+              myLocationEnabled: false,
+            ),
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: FilledButton.icon(
+                onPressed: () => _openDirections(venue),
+                icon: const Icon(Icons.directions, size: 18),
+                label: const Text('Directions'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  backgroundColor: accent,
+                  foregroundColor: ink,
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
-          ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -82,7 +90,8 @@ Future<void> _openDirections(VenueOption v) async {
   final uri = Uri.https('maps.apple.com', '/', {
     'll': '${v.lat},${v.lng}',
     'q': v.name,
-    'dirflg': 'w', // walking; these are neighbourhood venues, not cross-town trips
+    'dirflg':
+        'w', // walking; these are neighbourhood venues, not cross-town trips
   });
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
@@ -92,15 +101,17 @@ class _Fallback extends StatelessWidget {
   const _Fallback(this.address);
   @override
   Widget build(BuildContext context) => Container(
-        height: 84,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.white.withValues(alpha: 0.05),
-        ),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(16),
-        child: Text(address,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
-      );
+    height: 84,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(16),
+      color: bg,
+    ),
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(16),
+    child: Text(
+      address,
+      textAlign: TextAlign.center,
+      style: const TextStyle(color: bodyInk),
+    ),
+  );
 }

@@ -3,19 +3,13 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
+import 'core/backend_config.dart';
 import 'core/notifications.dart';
 
 /// DSN is passed at build time rather than committed. A Sentry DSN is not a secret in the
 /// API-key sense -- it only permits writing events -- but keeping it out of the repo means
 /// a fork does not silently report into our project.
 const _dsn = String.fromEnvironment('SENTRY_DSN');
-
-/// Pass --dart-define=USE_SUPABASE=true to run against the real backend, together with
-/// --dart-define=SUPABASE_URL=... and --dart-define=SUPABASE_ANON_KEY=... . Without the
-/// flag the app runs entirely on MockRepository and never touches Supabase.
-const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
-const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
 Future<void> main() async {
   if (_dsn.isEmpty) {
@@ -51,6 +45,11 @@ Future<void> main() async {
 /// the Sentry and no-Sentry paths so the swap behaves the same either way.
 Future<void> _boot() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // This must run before any plugin or SDK initialization so a misconfigured release fails for
+  // the actual missing input. The same compile-time decision is imported by app.dart; duplicating
+  // the flag in two files previously made it possible to initialize one backend and construct
+  // the other after a seemingly harmless default-value edit.
+  requireValidSupabaseConfiguration();
   // Before runApp so a tap that cold-started the app is already queued when the shell
   // subscribes. Deliberately does NOT prompt for permission -- see NotificationService.
   // Wrapped because a device with the plugin missing or unregistered must still boot:
@@ -60,17 +59,13 @@ Future<void> _boot() async {
   } catch (error, stack) {
     debugPrint('[ladder] init failed, notifications disabled: $error\n$stack');
   }
-  if (_useSupabase) {
-    assert(
-      _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty,
-      'USE_SUPABASE=true needs SUPABASE_URL and SUPABASE_ANON_KEY dart-defines',
-    );
+  if (useSupabaseBackend) {
     // Supabase renamed the public client credential to "publishable key" to make its security
     // role harder to misunderstand. Keep the environment variable backward-compatible for the
     // demo scripts, but use the current SDK argument so a future major upgrade is not blocked.
     await Supabase.initialize(
-      url: _supabaseUrl,
-      publishableKey: _supabaseAnonKey,
+      url: supabaseUrl,
+      publishableKey: supabaseAnonKey,
     );
   }
   runApp(const ShowUpApp());

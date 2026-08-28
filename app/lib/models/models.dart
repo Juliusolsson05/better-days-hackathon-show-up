@@ -6,6 +6,11 @@
 // to waiting/matched from repository truth rather than treating static mock groups as data.
 enum Phase { auth, onboarding, home, waiting, matched, during, after, contacts }
 
+/// RSVP is persisted separately from membership because being placed in a group and agreeing
+/// to attend are different facts. Keeping the pending state explicit prevents a missing row or
+/// failed read from being presented as a decline.
+enum RsvpStatus { pending, confirmed, declined }
+
 class Profile {
   final String id;
   final String displayName;
@@ -67,12 +72,21 @@ class VenueOption {
   bool get hasLocation => lat != null && lng != null;
 }
 
+/// The server-owned venue pipeline state.
+///
+/// This is intentionally not inferred from nullable option/result rows. Group formation, venue
+/// retrieval, and vote finalization are separate transactions, so an empty projection can mean
+/// "not ready", "failed", or "this group predates voting". Postgres records that distinction and
+/// Flutter must preserve it or a legacy display venue can accidentally become a writable ballot.
+enum VenueStatus { pending, voting, chosen, failed, legacy }
+
 class Group {
   final String id;
   final DateTime eventAt;
   final List<Member> members;
   final List<VenueOption> venueOptions;
   final String? chosenVenueId;
+  final VenueStatus venueStatus;
   final String activity;
   const Group({
     required this.id,
@@ -81,11 +95,37 @@ class Group {
     required this.venueOptions,
     required this.activity,
     this.chosenVenueId,
-  });
+    VenueStatus? venueStatus,
+  }) : venueStatus =
+           venueStatus ??
+           (chosenVenueId == null ? VenueStatus.voting : VenueStatus.chosen);
 
-  VenueOption? get chosenVenue => chosenVenueId == null
-      ? null
-      : venueOptions.firstWhere((v) => v.id == chosenVenueId);
+  /// Only typed options in the explicit voting state accept a ballot.
+  ///
+  /// In particular, a legacy venue also lives in [venueOptions] so the existing map/avatar
+  /// presentation can be reused, but its synthetic `legacy:<group>` id is not a Postgres UUID and
+  /// must never cross the vote API boundary.
+  bool get venueVoteOpen =>
+      venueStatus == VenueStatus.voting && chosenVenueId == null;
+
+  /// Whether polling can still reveal a meaningful venue transition.
+  bool get venueNeedsRefresh =>
+      venueStatus == VenueStatus.pending || venueStatus == VenueStatus.voting;
+
+  VenueOption? get chosenVenue {
+    if (venueStatus == VenueStatus.legacy) {
+      return venueOptions.isEmpty ? null : venueOptions.first;
+    }
+    if (chosenVenueId == null) return null;
+    // Group finalization and option projection are separate reads. During a deploy, retry, or
+    // stale mobile cache the winning id can arrive before its option row; crashing every chat
+    // surface is a much worse interpretation than briefly showing the existing "vote pending"
+    // state. The next group refresh repairs the projection without inventing venue details.
+    for (final venue in venueOptions) {
+      if (venue.id == chosenVenueId) return venue;
+    }
+    return null;
+  }
 }
 
 enum MessageKind { user, venueVote, system }
@@ -170,5 +210,26 @@ class MutualContact {
     required this.avatar,
     required this.phone,
     this.photoUrl,
+  });
+}
+
+/// A note another member wrote about the current user after the meetup.
+///
+/// This model deliberately has no `aboutUserId`: Postgres RLS returns only rows addressed to the
+/// caller and only after they have submitted their own reflection. Carrying a broader shape into
+/// Flutter would suggest the client can browse a group's private notes when it cannot and must not.
+class ReceivedReflection {
+  final String authorId;
+  final String authorName;
+  final String authorAvatar;
+  final String text;
+  final String? authorPhotoUrl;
+
+  const ReceivedReflection({
+    required this.authorId,
+    required this.authorName,
+    required this.authorAvatar,
+    required this.text,
+    this.authorPhotoUrl,
   });
 }

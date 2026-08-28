@@ -339,9 +339,13 @@ file, so the app can be pointed at a different project without a code change:
 
 ```bash
 flutter run \
+  --dart-define=USE_SUPABASE=true \
   --dart-define=SUPABASE_URL=https://xxx.supabase.co \
   --dart-define=SUPABASE_ANON_KEY=eyJ...
 ```
+
+Supabase is the default for ordinary runs so a missing selector cannot silently launch the
+fixture app. Pass `--dart-define=USE_SUPABASE=false` only for intentional offline/mock work.
 
 **If a service role key ever reaches the client, every RLS policy in this document becomes
 decorative.** That is the one mistake with no recovery short of rotating the key.
@@ -356,6 +360,8 @@ Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 - [ ] ⚠ Enable **email OTP** and verify hosted SMTP quota before rehearsal
 - [ ] `supabase link --project-ref <ref>`
 - [ ] `supabase db push`
+- [ ] ⚠ `./scripts/preflight.sh` — prove hosted secrets are non-empty and migration
+      history matches this checkout without printing any credential value
 - [ ] ⚠ Verify `messages` is in the `supabase_realtime` publication
 - [ ] Verify migration `0002` created the private `photos` bucket and storage policies
 - [ ] Create ClickHouse Cloud service, note the HTTPS endpoint and password
@@ -371,4 +377,4 @@ Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 - [ ] `./scripts/deploy_clickhouse_cdc.sh apply`
 - [ ] ⚠ Monitor the ClickPipe state and source replication-slot WAL retention
 - [ ] ⚠ Set the Xcode signing team so a build reaches the physical iPhone
-- [ ] `flutter run` with both `--dart-define`s
+- [ ] `flutter run` with `USE_SUPABASE=true` and both Supabase `--dart-define`s

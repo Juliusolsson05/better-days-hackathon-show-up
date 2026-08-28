@@ -21,6 +21,14 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when to_regprocedure('private.invoke_weekly_matching()') is not null then '0012'
+     when to_regprocedure(
+          'public.complete_profile_submission(uuid,uuid,timestamp with time zone)'
+        ) is not null then '0011'
+     when to_regprocedure('public.was_marked_no_show(uuid)') is not null then '0010'
+     when to_regprocedure('public.submit_reflection(uuid,text,boolean)') is not null
+          and not has_table_privilege('authenticated', 'public.profiles', 'update') then '0009'
+     when to_regprocedure('public.submit_reflection(uuid,text,boolean)') is not null then '0008'
      when exists (select 1 from pg_publication
                   where pubname='show_up_clickhouse') then '0007'
      when exists (select 1 from information_schema.tables
@@ -41,98 +49,75 @@ SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
      else 'unknown'
    end")"
 
-if [[ "$SCHEMA_STATE" == "0001" ]]; then
-  # Before the migration is applied locally, reproduce the repository's old documented manual
-  # Storage setup. This catches policies and legacy URL rows that a pristine schema never had.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/tests/0001_documented_upgrade_fixture.sql \
-    -f supabase/migrations/0002_after_meetup.sql \
-    -f supabase/migrations/0003_product_contracts.sql \
-    -f supabase/migrations/0004_chat.sql \
-    -f supabase/migrations/0005_production_lifecycle.sql \
-    -f supabase/migrations/0006_waitlist.sql \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0002" ]]; then
-  # This is the production upgrade path: 0002's after-meetup tables exist, but the wider
-  # lifecycle contract does not. Prove 0003 strengthens that deployed shape in place.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/migrations/0003_product_contracts.sql \
-    -f supabase/migrations/0004_chat.sql \
-    -f supabase/migrations/0005_production_lifecycle.sql \
-    -f supabase/migrations/0006_waitlist.sql \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0003" ]]; then
-  # Product contracts are present but optimistic chat delivery is not. This is the merge order
-  # used when chat hardening follows the wider reconciliation on a deployed database.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/migrations/0004_chat.sql \
-    -f supabase/migrations/0005_production_lifecycle.sql \
-    -f supabase/migrations/0006_waitlist.sql \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0004" ]]; then
-  # Chat is installed but the durable lifecycle checkpoint is not. Prove the exact deployed
-  # 0005/0006 history before adding CDC as 0007.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/migrations/0005_production_lifecycle.sql \
-    -f supabase/migrations/0006_waitlist.sql \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0005" ]]; then
-  # Production lifecycle is present but the separately deployed waitlist is not.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/migrations/0006_waitlist.sql \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0006" ]]; then
-  # This is the live pre-CDC state discovered from Supabase migration history. It is the most
-  # important upgrade path: only migration 0007 may run against production now.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/migrations/0007_clickhouse_cdc.sql \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-elif [[ "$SCHEMA_STATE" == "0007" ]]; then
-  # After local db reset has applied every migration, reapplying forward-only DDL would be a
-  # false failure. The behavioral assertions still run against the installed contract.
-  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
-    -c 'begin' \
-    -f supabase/tests/0002_product_contracts.sql \
-    -f supabase/tests/0004_chat.sql \
-    -f supabase/tests/0005_production_lifecycle.sql \
-    -f supabase/tests/0007_clickhouse_cdc.sql \
-    -c 'rollback'
-else
-  echo "local database is not a recognized 0001 through 0007 Show Up schema"
-  exit 1
+# Build one ordered replay instead of maintaining nine almost-identical psql commands. The rank is
+# explicit rather than parsed as a number because Bash treats leading-zero values as octal, making
+# 0008 and 0009 invalid arithmetic exactly when those release migrations need testing most.
+case "$SCHEMA_STATE" in
+  0001) SCHEMA_RANK=1 ;;
+  0002) SCHEMA_RANK=2 ;;
+  0003) SCHEMA_RANK=3 ;;
+  0004) SCHEMA_RANK=4 ;;
+  0005) SCHEMA_RANK=5 ;;
+  0006) SCHEMA_RANK=6 ;;
+  0007) SCHEMA_RANK=7 ;;
+  0008) SCHEMA_RANK=8 ;;
+  0009) SCHEMA_RANK=9 ;;
+  0010) SCHEMA_RANK=10 ;;
+  0011) SCHEMA_RANK=11 ;;
+  0012) SCHEMA_RANK=12 ;;
+  *)
+    echo "local database is not a recognized 0001 through 0012 Show Up schema"
+    exit 1
+    ;;
+esac
+
+PSQL_FILES=()
+
+if (( SCHEMA_RANK == 1 )); then
+  # A clean 0001 schema omits the public Storage policy operators historically created by hand.
+  # Reproducing it before the upgrade proves later privacy migrations remove the dangerous live
+  # shape, not merely that their desired state works on a pristine reset.
+  PSQL_FILES+=(-f supabase/tests/0001_documented_upgrade_fixture.sql)
 fi
+if (( SCHEMA_RANK < 2 )); then PSQL_FILES+=(-f supabase/migrations/0002_after_meetup.sql); fi
+if (( SCHEMA_RANK < 3 )); then PSQL_FILES+=(-f supabase/migrations/0003_product_contracts.sql); fi
+if (( SCHEMA_RANK < 4 )); then PSQL_FILES+=(-f supabase/migrations/0004_chat.sql); fi
+if (( SCHEMA_RANK < 5 )); then PSQL_FILES+=(-f supabase/migrations/0005_production_lifecycle.sql); fi
+if (( SCHEMA_RANK < 6 )); then PSQL_FILES+=(-f supabase/migrations/0006_waitlist.sql); fi
+
+# origin/main owns CDC as 0007 after the migration-history reconciliation. This worktree may be
+# inspected before those upstream files are merged, so include the CDC migration and its contract
+# whenever present without replacing or re-expressing their behavior here. Once present, omitting
+# them from an earlier-state replay would falsely certify a schema that cannot match production.
+if [[ -f supabase/migrations/0007_clickhouse_cdc.sql ]] && (( SCHEMA_RANK < 7 )); then
+  PSQL_FILES+=(-f supabase/migrations/0007_clickhouse_cdc.sql)
+fi
+if (( SCHEMA_RANK < 8 )); then PSQL_FILES+=(-f supabase/migrations/0008_reflection_submission.sql); fi
+if (( SCHEMA_RANK < 9 )); then PSQL_FILES+=(-f supabase/migrations/0009_profile_write_boundary.sql); fi
+if (( SCHEMA_RANK < 10 )); then PSQL_FILES+=(-f supabase/migrations/0010_post_meetup_write_boundary.sql); fi
+if (( SCHEMA_RANK < 11 )); then PSQL_FILES+=(-f supabase/migrations/0011_profile_submission_version.sql); fi
+if (( SCHEMA_RANK < 12 )); then PSQL_FILES+=(-f supabase/migrations/0012_weekly_matching_cron.sql); fi
+
+# Every suite runs against the final in-transaction shape. Older tests protect invariants shared by
+# later migrations, while 0008/0009 specifically exercise the two write doors that moved behind
+# server-owned RPC/service-role boundaries.
+PSQL_FILES+=(
+  -f supabase/tests/0002_product_contracts.sql
+  -f supabase/tests/0004_chat.sql
+  -f supabase/tests/0005_production_lifecycle.sql
+)
+if [[ -f supabase/tests/0007_clickhouse_cdc.sql ]]; then
+  PSQL_FILES+=(-f supabase/tests/0007_clickhouse_cdc.sql)
+fi
+PSQL_FILES+=(
+  -f supabase/tests/0008_reflection_submission.sql
+  -f supabase/tests/0009_profile_write_boundary.sql
+  -f supabase/tests/0010_post_meetup_write_boundary.sql
+  -f supabase/tests/0011_profile_submission_version.sql
+  -f supabase/tests/0012_weekly_matching_cron.sql
+)
+
+psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
+  -c 'begin' \
+  "${PSQL_FILES[@]}" \
+  -c 'rollback'

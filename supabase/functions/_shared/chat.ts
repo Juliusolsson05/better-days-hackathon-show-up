@@ -18,6 +18,35 @@ export interface ChatMember {
   tags: string[];
 }
 
+export class OpenChatRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenChatRequestError';
+  }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Validate the operator request before it can choose the single-group or bulk path. */
+export function parseOpenChatRequest(input: unknown): { groupId: string | null } {
+  // Missing group_id intentionally means "backfill every group", so treating malformed JSON as
+  // an empty object is unusually dangerous here: one bad curl body changes a targeted repair into
+  // a write across the whole project. Keep JSON parsing in the entrypoint, then require an object
+  // and validate the optional id here before any service-role query is constructed.
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new OpenChatRequestError('body must be a JSON object');
+  }
+
+  const raw = (input as Record<string, unknown>).group_id;
+  if (raw === undefined || raw === null) return { groupId: null };
+  if (typeof raw !== 'string' || !UUID.test(raw)) {
+    // Never echo the submitted value. This is an operator-only endpoint today, but returning
+    // arbitrary request text in a response/log is still an avoidable reflected-data boundary.
+    throw new OpenChatRequestError('group_id must be a UUID');
+  }
+  return { groupId: raw };
+}
+
 const NUMBER = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'];
 
 /**

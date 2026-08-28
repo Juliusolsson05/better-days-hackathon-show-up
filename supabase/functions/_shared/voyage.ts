@@ -3,8 +3,6 @@
 //
 // voyage-4 gives 200M free tokens per account, which covers this entire project.
 
-const KEY = Deno.env.get('VOYAGE_API_KEY')!;
-
 /**
  * 256 dimensions, matching profile_vectors. voyage-4 embeddings are Matryoshka, so the
  * first 256 of the 2048 are a valid embedding on their own with negligible quality loss
@@ -20,12 +18,20 @@ export const DIMS = 256;
  * symmetric; mixing the two would quietly degrade every match with no error to show for it.
  */
 export async function embed(texts: string[]): Promise<number[][]> {
-  const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEY}` },
+  // Resolve at first provider use rather than module import. Pure unit tests and operator-only auth
+  // failures must still start without production secrets, while a real call should name the exact
+  // missing deployment value instead of sending the meaningless header "Bearer undefined".
+  const key = Deno.env.get("VOYAGE_API_KEY");
+  if (!key) throw new Error("missing secret VOYAGE_API_KEY");
+  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
     body: JSON.stringify({
       input: texts,
-      model: 'voyage-4',
+      model: "voyage-4",
       input_type: null,
       output_dimension: DIMS,
     }),
@@ -45,7 +51,9 @@ export function center(v: number[], mean: number[]): number[] {
   // A short mean silently produces NaNs for every dimension past its length, and NaN
   // vectors sort to the front of a cosineDistance ranking. Fail here instead.
   if (mean.length !== v.length) {
-    throw new Error(`centroid is ${mean.length} dims, embedding is ${v.length}`);
+    throw new Error(
+      `centroid is ${mean.length} dims, embedding is ${v.length}`,
+    );
   }
   return v.map((x, i) => x - mean[i]);
 }
@@ -55,5 +63,5 @@ export function center(v: number[], mean: number[]): number[] {
  * short to embed cleanly on its own. Glue them together so the model has something to work with.
  */
 export function profileText(p: { passion: string; tags: string[] }): string {
-  return `Interests: ${p.tags.join(', ')}\n\nPassionate about: ${p.passion}`;
+  return `Interests: ${p.tags.join(", ")}\n\nPassionate about: ${p.passion}`;
 }

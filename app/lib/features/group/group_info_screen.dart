@@ -13,96 +13,132 @@ class GroupInfoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final group = state.group!;
-    final venue = group.chosenVenue;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Group')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
-        children: [
-          if (venue == null)
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: surface,
-                borderRadius: BorderRadius.circular(cardRadius),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.how_to_vote_outlined, size: 20, color: inkDeep),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Voting is still open. The destination appears here after everyone votes.',
-                      style: TextStyle(color: bodyInk, height: 1.45),
-                    ),
+    // This route sits above the root ListenableBuilder, so changes to AppState do not rebuild it
+    // automatically. Venue finalization is learned asynchronously while this page is open; listen
+    // here so the backend's chosen_venue_id actually replaces the pending ballot without requiring
+    // the user to pop the page and open it again.
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) {
+        final group = state.group!;
+        final venue = group.chosenVenue;
+        return Scaffold(
+          appBar: AppBar(title: const Text('Group')),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+            children: [
+              if (venue == null)
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: surface,
+                    borderRadius: BorderRadius.circular(cardRadius),
                   ),
-                ],
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: surface,
-                borderRadius: BorderRadius.circular(cardRadius),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+                  child: const Row(
                     children: [
-                      const Icon(
-                        Icons.place_outlined,
+                      Icon(
+                        Icons.how_to_vote_outlined,
                         size: 20,
                         color: inkDeep,
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          venue.name,
-                          style: Theme.of(context).textTheme.titleLarge,
+                          'Voting is still open. The destination appears here after everyone votes.',
+                          style: TextStyle(color: bodyInk, height: 1.45),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    venue.address,
-                    style: Theme.of(context).textTheme.bodyMedium,
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: surface,
+                    borderRadius: BorderRadius.circular(cardRadius),
                   ),
-                  const SizedBox(height: 16),
-                  // A map before finalization gives the first candidate visual authority and
-                  // implies the ballot no longer matters. Postgres' chosen_venue_id is the only
-                  // winning signal, so location details exist exclusively in this branch.
-                  VenueMap(venue),
-                ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.place_outlined,
+                            size: 20,
+                            color: inkDeep,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              venue.name,
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        venue.address,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 16),
+                      // A map before finalization gives the first candidate visual authority and
+                      // implies the ballot no longer matters. Postgres' chosen_venue_id is the only
+                      // winning signal, so location details exist exclusively in this branch.
+                      VenueMap(venue),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 28),
+              Text(
+                '${group.members.length} people',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-            ),
-          const SizedBox(height: 28),
-          Text(
-            '${group.members.length} people',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-            decoration: BoxDecoration(
-              color: surface,
-              borderRadius: BorderRadius.circular(cardRadius),
-            ),
-            child: Column(
-              children: [
-                for (var index = 0; index < group.members.length; index++) ...[
-                  _member(context, group.members[index]),
-                  if (index != group.members.length - 1) const Divider(),
-                ],
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(cardRadius),
+                ),
+                child: Column(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < group.members.length;
+                      index++
+                    ) ...[
+                      _member(context, group.members[index]),
+                      if (index != group.members.length - 1) const Divider(),
+                    ],
+                  ],
+                ),
+              ),
+              if (group.eventAt
+                  .add(const Duration(hours: 2))
+                  .isBefore(DateTime.now())) ...[
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: () => _showReceivedReflections(context, state),
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  label: const Text('What people remembered'),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => _showMutualContacts(context, state),
+                  icon: const Icon(Icons.contact_phone_outlined),
+                  label: const Text('View mutual contacts'),
+                ),
               ],
-            ),
+              const SizedBox(height: 32),
+            ],
           ),
-          const SizedBox(height: 32),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -130,6 +166,110 @@ class GroupInfoScreen extends StatelessWidget {
           ],
         ),
       ],
+    ),
+  );
+}
+
+Future<void> _showMutualContacts(BuildContext context, AppState state) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    // Contacts can become mutual after this user finishes the one-time after-flow, so this later
+    // read is the production path to newly reciprocal results. Keep the info route in place until
+    // the RPC succeeds: popping first hid backend errors in chat and made a failed read look like a
+    // successful navigation. loadContacts changes the root phase; this final pop reveals it.
+    await state.loadContacts();
+    if (!context.mounted) return;
+    Navigator.pop(context);
+  } catch (_) {
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not load contacts. Try again.')),
+    );
+  }
+}
+
+Future<void> _showReceivedReflections(
+  BuildContext context,
+  AppState state,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final notes = await state.repo.receivedReflections(state.group!.id);
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ReflectionSheet(notes),
+    );
+  } catch (_) {
+    // A missing reciprocal note is an ordinary empty result, while a failed read is recoverable.
+    // Keep those distinct so an outage does not tell someone that nobody remembered them.
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not load reflections. Try again.')),
+    );
+  }
+}
+
+class _ReflectionSheet extends StatelessWidget {
+  const _ReflectionSheet(this.notes);
+
+  final List<ReceivedReflection> notes;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'What people remembered',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            notes.isEmpty
+                ? 'Nothing has come back yet. Reflections appear only after both sides write.'
+                : 'Only notes written about you appear here.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            for (final note in notes)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(cardRadius),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Avatar(note.authorAvatar, imageUrl: note.authorPhotoUrl),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            note.authorName,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(note.text),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
     ),
   );
 }

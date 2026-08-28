@@ -38,6 +38,9 @@ begin
         raise exception 'required phone constraint was validated or omitted during legacy upgrade';
     end if;
 
+    -- The product-contract fixture finishes user two with a non-empty contact choice. This
+    -- owner-visible assertion proves the upgraded RPC records that pre-existing success path;
+    -- the authenticated assertions below separately cover the easy-to-miss empty choice.
     if not exists (
         select 1 from public.after_flow_completions
         where group_id = own_group
@@ -113,6 +116,8 @@ begin
         raise exception 'complete profile was not marked ready';
     end if;
 
+    -- Validation must happen before replacement and completion. Otherwise a malformed final
+    -- request could erase the user's prior choice and falsely suppress the post-meetup prompt.
     begin
         perform public.set_contact_selections(
             own_group,

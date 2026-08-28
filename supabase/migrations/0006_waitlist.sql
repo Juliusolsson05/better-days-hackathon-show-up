@@ -1,9 +1,12 @@
 -- Waitlist capture for the public landing page.
 --
--- This was originally numbered 0003 while product-contract work was on another branch. The
--- deployed database is now the source of truth for migration identity: product contracts own
--- 0003, chat owns 0004, production lifecycle owns 0005, and this waitlist is recorded as 0006.
--- Renaming the repository file preserves that history instead of attempting a dangerous repair.
+-- This was originally numbered 0003 while the product-contract work was still on another
+-- branch. The merge made that guess false: product contracts now own 0003, chat owns 0004,
+-- and production lifecycle owns 0005. Migration identity is durable deployment state rather
+-- than cosmetic file ordering, so the waitlist must follow them as 0006; two files claiming
+-- 0003 cannot both be represented honestly in Supabase's migration history.
+-- The hosted database already records this as 0006, so renaming is also what preserves deployed
+-- history instead of asking operators to perform a dangerous migration-history repair.
 --
 -- NOT YET APPLIED. Until someone runs `supabase db push`, the landing page's waitlist route
 -- returns a 503 and the form says so, rather than reporting a success it did not achieve.

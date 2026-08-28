@@ -2,16 +2,24 @@
 // earning its place: none of these questions can be answered from Postgres without a
 // table scan per slice.
 
-import { ch } from '../_shared/clickhouse.ts';
+import { ch } from "../_shared/clickhouse.ts";
+import { COHESION_QUERY } from "../_shared/analytics.ts";
 
 // A browser dashboard fails preflight without these.
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "GET") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { ...CORS, Allow: "GET, OPTIONS" },
+    });
+  }
   try {
     const [funnel, cohesion, volume] = await Promise.all([
       ch(`SELECT level, count() AS people FROM (
@@ -20,9 +28,10 @@ Deno.serve(async (req) => {
             ) AS level
             FROM events WHERE ts > now() - INTERVAL 30 DAY GROUP BY user_id
           ) GROUP BY level ORDER BY level`),
-      ch(`SELECT round(JSONExtractFloat(props, 'seed_distance'), 1) AS bucket, count() AS n
-          FROM events WHERE name = 'group_formed'
-          GROUP BY bucket ORDER BY bucket`),
+      // group_formed is deliberately emitted once per member so it can participate in each
+      // person's funnel. The distance panel is group-level, though, so its query must deduplicate
+      // those 4-6 rows by group_id instead of presenting member-event volume as a group count.
+      ch(COHESION_QUERY),
       ch(`SELECT name, count() AS n FROM events
           WHERE ts > now() - INTERVAL 7 DAY GROUP BY name ORDER BY n DESC`),
     ]);
@@ -35,6 +44,11 @@ Deno.serve(async (req) => {
     }, { headers: CORS });
   } catch (err) {
     console.error(err);
-    return Response.json({ error: String(err) }, { status: 500, headers: CORS });
+    // This endpoint is intentionally public. ClickHouse errors can include SQL, host details, and
+    // provider response bodies; those belong in function logs, never in an aggregate dashboard.
+    return Response.json({ error: "analytics unavailable" }, {
+      status: 500,
+      headers: CORS,
+    });
   }
 });

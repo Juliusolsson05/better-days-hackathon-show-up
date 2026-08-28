@@ -7,6 +7,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.47.10";
 import { arr, ch, emit } from "../_shared/clickhouse.ts";
 import { planGroup } from "../_shared/claude.ts";
 import { openChat } from "../_shared/chat.ts";
+import { haveOpposingStances, opposingStances } from "../_shared/matching.ts";
 import { nextSlot } from "../_shared/schedule.ts";
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
@@ -22,26 +23,69 @@ const MAX_GROUP = 6;
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+const SLOTS = new Set(["fri_eve", "sat_day", "sat_eve", "sun_day"]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") {
+    return Response.json({ error: "method not allowed" }, {
+      status: 405,
+      headers: { ...CORS, Allow: "POST, OPTIONS" },
+    });
+  }
   try {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const auth = req.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`) {
+    if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
       return new Response("forbidden", { status: 403, headers: CORS });
     }
 
-    const { city = "SF", slot = "fri_eve" } = await req.json().catch(
-      () => ({}),
-    );
+    let input: unknown;
+    try {
+      input = await req.json();
+    } catch {
+      // Defaulting malformed JSON to the default city/slot turns a typo in an operator or cron
+      // request into a real paid matching sweep. Only a valid empty object may choose defaults.
+      return Response.json({ error: "body must be valid JSON" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      return Response.json({ error: "body must be a JSON object" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    const raw = input as Record<string, unknown>;
+    const city = raw.city === undefined ? "SF" : raw.city;
+    const slot = raw.slot === undefined ? "fri_eve" : raw.slot;
+    if (
+      typeof city !== "string" || city.trim().length === 0 ||
+      city.trim().length > 80
+    ) {
+      return Response.json({ error: "city must be 1-80 characters" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    if (typeof slot !== "string" || !SLOTS.has(slot)) {
+      return Response.json({ error: "slot is not supported" }, {
+        status: 400,
+        headers: CORS,
+      });
+    }
+    const normalizedCity = city.trim();
     const eventAt = nextSlot(slot);
     // This key is stable for every retry targeting the same city, availability bucket, and
     // actual meetup. It scopes the database's "one user, one group" invariant to a cycle rather
     // than incorrectly preventing a person from ever joining a future Show Up event.
-    const runKey = `${city.toLowerCase()}:${slot}:${eventAt}`;
+    const runKey = `${normalizedCity.toLowerCase()}:${slot}:${eventAt}`;
 
     // Service role: this runs as the system, not as any user, and writes groups for
     // people who are not the caller.
@@ -64,8 +108,10 @@ Deno.serve(async (req) => {
     );
 
     const { data: pool, error: poolErr } = await db.from("profiles")
-      .select("id, display_name, passion, tags")
-      .eq("city", city)
+      .select(
+        "id, display_name, passion, tags, embedded_at, embedding_submission_id",
+      )
+      .eq("city", normalizedCity)
       .contains("availability", [slot])
       .not("embedded_at", "is", null);
     if (poolErr) throw poolErr;
@@ -85,6 +131,7 @@ Deno.serve(async (req) => {
     );
     const skipped: string[] = [];
     const formed: string[] = [];
+    const readinessRepaired: string[] = [];
     let lastStats = { elapsed: 0, rows_read: 0, bytes_read: 0 };
 
     while (unassigned.size >= MIN_GROUP) {
@@ -94,16 +141,36 @@ Deno.serve(async (req) => {
       // The seed's own vector, fetched separately. Inlining it as a scalar subquery means
       // a missing row yields [] rather than an error, and cosineDistance then fails with
       // "arrays have different sizes" from inside the scan, which is much harder to read.
-      const { rows: self } = await ch<{ embedding: number[] }>(
-        `SELECT embedding FROM profile_vectors FINAL WHERE user_id = {self:UUID} LIMIT 1`,
+      const { rows: self } = await ch<{
+        embedding: number[];
+        tags: string[];
+      }>(
+        `SELECT embedding, tags FROM profile_vectors FINAL WHERE user_id = {self:UUID} LIMIT 1`,
         { self: seed },
       );
       if (!self.length) {
-        // embedded_at was set but the ClickHouse write did not land. Skip, don't die.
+        // Postgres readiness without its ClickHouse representation traps a restored app after
+        // onboarding while making matching silently skip it forever. Clear only the submission we
+        // observed: a concurrent resubmission changes the UUID before doing external work, so this
+        // repair cannot erase readiness belonging to a newer successful request.
+        let repair = db.from("profiles").update({ embedded_at: null })
+          .eq("id", seed)
+          .eq("embedded_at", unassigned.get(seed)!.embedded_at);
+        const submissionId = unassigned.get(seed)!.embedding_submission_id;
+        if (submissionId) {
+          repair = repair.eq("embedding_submission_id", submissionId);
+        }
+        const { data: repaired, error: repairErr } = await repair.select("id")
+          .maybeSingle();
+        if (repairErr) throw repairErr;
+        if (repaired) readinessRepaired.push(seed);
         skipped.push(seed);
         continue;
       }
-      const seedTags: string[] = unassigned.get(seed)!.tags ?? [];
+      // Postgres stores the interests people picked; ClickHouse stores Claude's derived stance
+      // flags alongside the vector. Reading the former here made the opposition filter a no-op
+      // for every normal profile even though the candidate side correctly used ClickHouse.
+      const seedTags = self[0].tags ?? [];
 
       // Restricted to the real pool with has(), because profile_vectors also holds a
       // million synthetic rows that exist nowhere in Postgres -- without this every
@@ -135,7 +202,7 @@ Deno.serve(async (req) => {
         {
           vec: arr(self[0].embedding),
           self: seed,
-          city,
+          city: normalizedCity,
           avail: arr([slot]),
           pool: arr([...unassigned.keys()]),
           blocked: arr(opposingStances(seedTags)),
@@ -147,6 +214,7 @@ Deno.serve(async (req) => {
       // near-identical people, which is a dull evening; we want the same topic
       // neighbourhood with variety in temperament.
       const picked = [seed];
+      const pickedStances = new Map<string, string[]>([[seed, seedTags]]);
       const seenEnergy = new Set<string>();
       for (const pass of [1, 2]) {
         for (const cand of rows) {
@@ -154,9 +222,19 @@ Deno.serve(async (req) => {
           if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) {
             continue;
           }
+          // NOT hasAny is intentionally retained above as the cheap seed/candidate path for
+          // canonical rows. This guard is still authoritative: it handles legacy/free-form
+          // spellings and checks every person already picked, not merely the seed. Otherwise
+          // two opposed candidates could land together when the seed held neither stance.
+          if (
+            [...pickedStances.values()].some((tags) =>
+              haveOpposingStances(tags, cand.tags ?? [])
+            )
+          ) continue;
           if (pass === 1 && seenEnergy.has(cand.energy)) continue;
           seenEnergy.add(cand.energy);
           picked.push(cand.user_id);
+          pickedStances.set(cand.user_id, cand.tags ?? []);
         }
       }
       if (picked.length < MIN_GROUP) {
@@ -173,7 +251,7 @@ Deno.serve(async (req) => {
           passion: m.passion,
           tags: m.tags,
         })),
-        city,
+        normalizedCity,
       );
 
       // The model returns user_ids as free strings. Writing them straight into a table
@@ -267,7 +345,12 @@ Deno.serve(async (req) => {
       }
 
       for (const id of picked) unassigned.delete(id);
-      await Promise.all(
+      // form_group is already committed and is the product fact. A ClickHouse event failure must
+      // not turn that success into a 500 or abort the remaining pool: the retry-safe run key would
+      // correctly refuse to duplicate this group, but every person after it would remain unmatched
+      // until an operator happened to run the sweep again. allSettled keeps per-member analytics
+      // best-effort without hiding which observations were dropped from function logs.
+      const eventResults = await Promise.allSettled(
         picked.map((id) =>
           emit("group_formed", id, groupId, {
             seed_distance: seedDistance,
@@ -275,6 +358,14 @@ Deno.serve(async (req) => {
           })
         ),
       );
+      for (const result of eventResults) {
+        if (result.status === "rejected") {
+          console.error(
+            `group ${groupId} committed but group_formed analytics was dropped`,
+            result.reason,
+          );
+        }
+      }
       formed.push(groupId);
     }
 
@@ -343,6 +434,7 @@ Deno.serve(async (req) => {
       venue_existing: groupsWithBallots.size,
       venue_ready: venueReady,
       venue_failures: venueFailures,
+      readiness_repaired: readinessRepaired.length,
       stats: lastStats,
     }, { headers: CORS });
   } catch (err) {
@@ -353,26 +445,6 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-/**
- * Stance tags are written as `stance:<position>`. Two people holding opposite positions on
- * the same subject embed almost identically -- the embedding cannot separate them, so the
- * tag has to. Kept crude on purpose: an explicit opposition table beats an LLM call here.
- */
-const OPPOSED: Record<string, string[]> = {
-  vegan: ["hunting", "bbq", "steakhouse"],
-  hunting: ["vegan", "vegetarian", "animal_rights"],
-  sober: ["heavy_drinking", "bar_crawl"],
-  religious: ["militant_atheist"],
-};
-function opposingStances(tags: string[]): string[] {
-  const out = new Set<string>();
-  for (const t of tags) {
-    if (!t.startsWith("stance:")) continue;
-    for (const o of OPPOSED[t.slice(7)] ?? []) out.add(`stance:${o}`);
-  }
-  return [...out];
-}
 
 /**
  * Next occurrence of the slot's weekday at the slot's hour, in Pacific time. The edge

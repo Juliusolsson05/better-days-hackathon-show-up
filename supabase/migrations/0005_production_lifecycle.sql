@@ -6,14 +6,21 @@
 --   * An empty contact selection is still a completed post-meetup flow. Counting selections
 --     cannot distinguish "finished and selected nobody" from "has not answered yet".
 --
--- This file mirrors migration 0005 already recorded by the hosted database. Keeping deployed
--- history in Git is mandatory: later migrations and fresh environments must share one ordering.
+-- Both facts live beside their source data so app restarts and a different device reach the
+-- same decision without receiving the private phone column or guessing from nullable rows.
+-- This exact version is already recorded by the hosted database, so keeping it in Git is part of
+-- the deployment contract: later migrations and fresh environments must share one ordering.
 
+-- Existing demo profiles may predate phone capture. NOT VALID preserves those rows during the
+-- deadline upgrade while still rejecting every new insert and every future update that would
+-- leave a profile unable to participate in mutual contact exchange.
 alter table public.profiles add constraint profiles_phone_required
     check (phone is not null) not valid;
 
--- A security-definer boolean avoids granting phone SELECT merely so the client can decide
--- onboarding state. It reveals only whether the caller's own profile reached every prerequisite.
+-- A security-definer boolean is intentional here. profiles is group-readable but phone is not,
+-- and granting phone SELECT merely so the client can decide onboarding state would undo the
+-- strongest privacy boundary in the product. The function reveals no more than whether the
+-- caller's own profile has reached every server-side prerequisite.
 create or replace function public.profile_ready()
 returns boolean
 language sql stable security definer set search_path = public as $$
@@ -40,16 +47,18 @@ create table public.after_flow_completions (
     user_id uuid not null,
     completed_at timestamptz not null default now(),
     primary key (group_id, user_id),
-    -- Membership is the durable parent fact. Separate UUID foreign keys would allow a real user
-    -- from another group and make lifecycle restoration lie even if RLS hid the corrupt row.
+    -- Membership is the durable parent fact for every group-scoped answer. A pair of ordinary
+    -- UUID foreign keys would allow a completion to be attached to a real user in the wrong
+    -- group, which would make lifecycle restoration lie even if RLS hid the bad row.
     foreign key (group_id, user_id)
         references public.group_members (group_id, user_id) on delete cascade
 );
 
 alter table public.after_flow_completions enable row level security;
 
--- Completion is not socially interesting group data. Exposing who has answered would create
--- interpersonal pressure, so callers can read only their own durable checkpoint.
+-- Completion is not socially interesting group data. Showing which members have answered would
+-- create the same interpersonal pressure the one-way contact privacy model avoids, so callers
+-- can read only their own durable checkpoint and cannot write it outside the final-step RPC.
 create policy "read own after-flow completion"
     on public.after_flow_completions for select to authenticated
     using (user_id = auth.uid());
@@ -59,7 +68,10 @@ grant select on table public.after_flow_completions to authenticated;
 grant all on table public.after_flow_completions to service_role;
 
 -- Replacement, including an empty selection, is the final post-meetup commit. Keeping the
--- completion insert in this function makes the state transition atomic and retries idempotent.
+-- completion insert in this function prevents a killed/backgrounded client from recording only
+-- half of the decision and makes retries idempotent. completed_at intentionally records the first
+-- completion; editing contact choices later does not turn the lifecycle checkpoint into an
+-- activity timestamp.
 create or replace function public.set_contact_selections(grp uuid, selected uuid[])
 returns void
 language plpgsql security definer set search_path = public as $$

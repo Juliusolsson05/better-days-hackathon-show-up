@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/backend_config.dart';
 import 'core/notifications.dart';
 import 'core/theme.dart';
 import 'data/mock_repository.dart';
@@ -21,18 +22,26 @@ import 'features/onboarding/waiting_screen.dart';
 import 'features/product/product_shell.dart';
 
 class ShowUpApp extends StatefulWidget {
-  const ShowUpApp({super.key});
+  const ShowUpApp({super.key, this.useMockRepositoryForTesting = false});
+
+  /// Widget tests construct the shell without running main(), so Supabase has intentionally not
+  /// been initialized there. Keeping this override explicit preserves hermetic tests without
+  /// making every normal debug/release launch silently choose fixtures again.
+  @visibleForTesting
+  final bool useMockRepositoryForTesting;
+
   @override
   State<ShowUpApp> createState() => _ShowUpAppState();
 }
 
 class _ShowUpAppState extends State<ShowUpApp> {
-  /// --dart-define=USE_SUPABASE=true swaps the mock for the real backend. Main() only
-  /// calls Supabase.initialize under the same flag, so MockRepository stays the default
-  /// and needs no cloud project.
-  static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
   static const _showReferenceUi = bool.fromEnvironment('SHOW_REFERENCE_UI');
 
+  /// Main and this shell import one compile-time decision from backend_config.dart. The test-only
+  /// override is intentionally runtime-owned by the widget because `flutter test` does not invoke
+  /// main() and must not need credentials for a repository it never exercises.
+  late final bool _useSupabase =
+      useSupabaseBackend && !widget.useMockRepositoryForTesting;
   late final Repository _repo = _useSupabase
       ? SupabaseRepository(Supabase.instance.client)
       : MockRepository();
@@ -46,7 +55,7 @@ class _ShowUpAppState extends State<ShowUpApp> {
     // preview available in a release-mode reference build without weakening production.
     referenceUiPreview: !_useSupabase && (kDebugMode || _showReferenceUi),
   );
-  bool _restoring = _useSupabase;
+  late bool _restoring;
   Object? _restoreError;
 
   Phase _initialPhase() {
@@ -63,6 +72,9 @@ class _ShowUpAppState extends State<ShowUpApp> {
   @override
   void initState() {
     super.initState();
+    // `_useSupabase` reads widget, which Flutter attaches only after constructing State. Setting
+    // this here avoids evaluating that late field from a State field initializer too early.
+    _restoring = _useSupabase;
     _repo.signIn();
     // Notification responses outlive individual screens. Subscribe before restoration so a
     // cold-start tap can be replayed once AppState has loaded the durable group.

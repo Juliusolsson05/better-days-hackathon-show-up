@@ -132,7 +132,48 @@ const VenuePitches = z.object({
   })),
 });
 
-const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
+type VenuePitch = { venue_id: string; pitch: string };
+
+/** Turn model output into the exact, complete ballot copy contract. */
+export function validateVenuePitches(
+  venueIds: readonly string[],
+  options: readonly VenuePitch[],
+): Map<string, string> {
+  const expected = new Set(venueIds);
+  const out = new Map<string, string>();
+
+  for (const option of options) {
+    // Structured output proves the field types, not the relationship to the candidates we sent.
+    // Silently ignoring an invented id (the old behavior) also silently leaves a real option with
+    // an empty pitch, which then becomes durable because replace_venue_options() correctly treats
+    // the ballot as immutable after voting begins. Reject the whole proposal while the group is
+    // still retryable instead of persisting a half-modelled product surface.
+    if (!expected.has(option.venue_id)) {
+      throw new Error("venue pitch returned an unknown venue id");
+    }
+    if (out.has(option.venue_id)) {
+      throw new Error("venue pitch returned a duplicate venue id");
+    }
+    const pitch = option.pitch.trim();
+    if (!pitch) throw new Error("venue pitch returned empty copy");
+    out.set(option.venue_id, pitch);
+  }
+
+  if (out.size !== expected.size) {
+    throw new Error("venue pitch omitted a candidate");
+  }
+  return out;
+}
+
+let client: Anthropic | undefined;
+
+function anthropic(): Anthropic {
+  // Venue unit tests exercise ranking without a live provider. Resolve the key only when copy is
+  // generated so those tests remain hermetic while deployed failures name the missing secret.
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("missing secret ANTHROPIC_API_KEY");
+  return client ??= new Anthropic({ apiKey });
+}
 
 /**
  * Write one line per venue, for this group.
@@ -146,7 +187,7 @@ export async function pitchVenues(
   venues: VenueCandidate[],
   members: { display_name: string; passion: string; tags: string[] }[],
 ): Promise<Map<string, string>> {
-  const res = await client.beta.messages.parse({
+  const res = await anthropic().beta.messages.parse({
     model: "claude-opus-5",
     max_tokens: 4000,
     output_format: betaZodOutputFormat(VenuePitches),
@@ -175,10 +216,8 @@ export async function pitchVenues(
     throw new Error("venue pitch returned no parsed output");
   }
 
-  const sent = new Set(venues.map((v) => v.venue_id));
-  const out = new Map<string, string>();
-  for (const o of res.parsed_output.options) {
-    if (sent.has(o.venue_id)) out.set(o.venue_id, o.pitch);
-  }
-  return out;
+  return validateVenuePitches(
+    venues.map((venue) => venue.venue_id),
+    res.parsed_output.options,
+  );
 }

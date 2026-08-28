@@ -16,7 +16,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(const ShowUpApp());
+    // Supabase is now the safe default for every real launch. Widget tests do not execute main()
+    // (and therefore cannot initialize its SDK), so fixture mode must be requested explicitly.
+    await tester.pumpWidget(const ShowUpApp(useMockRepositoryForTesting: true));
     await tester.pump();
 
     expect(

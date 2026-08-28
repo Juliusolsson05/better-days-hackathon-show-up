@@ -34,6 +34,14 @@ class _ChatStub extends MockRepository {
   }
 
   @override
+  Future<RsvpStatus> myRsvp(String groupId) async {
+    // These tests end after inspecting chat delivery, often before MockRepository's simulated
+    // network latency can elapse. RSVP has its own lifecycle coverage, so inheriting that timer
+    // here would make an unrelated fixture fail teardown without testing any chat behavior.
+    return RsvpStatus.pending;
+  }
+
+  @override
   Future<void> track(
     String event, {
     String? groupId,
@@ -43,6 +51,8 @@ class _ChatStub extends MockRepository {
   }
 
   void push(List<Message> msgs) => _controller.add(msgs);
+
+  void fail(Object error) => _controller.addError(error);
 
   @override
   void dispose() {
@@ -164,5 +174,33 @@ void main() {
     await tester.pump();
 
     expect(repo.watches, 1);
+  });
+
+  testWidgets('a failed message stream is visible and explicitly reconnectable', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final repo = _ChatStub();
+    addTearDown(repo.dispose);
+    await _mounted(tester, repo);
+
+    repo.fail(StateError('realtime disconnected'));
+    await tester.pump();
+
+    // An outage previously collapsed into the same empty list as a quiet new room. That tells a
+    // person nobody has spoken when the app actually has no connection, with no way to recover.
+    expect(find.text('Messages lost connection.'), findsOneWidget);
+    expect(repo.watches, 1);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+
+    // A fresh repository stream is the recovery protocol. Rebuilding the old errored stream would
+    // leave StreamBuilder attached to the terminated Supabase realtime channel forever.
+    expect(repo.watches, 2);
+    expect(find.text('Messages lost connection.'), findsNothing);
   });
 }

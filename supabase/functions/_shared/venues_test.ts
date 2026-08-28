@@ -16,7 +16,7 @@ Deno.env.set('ANTHROPIC_API_KEY', 'test');
 Deno.env.set('VOYAGE_API_KEY', 'test');
 
 const { arr, arr2 } = await import('./clickhouse.ts');
-const { diversify } = await import('./venues.ts');
+const { diversify, validateVenuePitches } = await import('./venues.ts');
 
 Deno.test('arr quotes strings and leaves numbers bare', () => {
   // ClickHouse parses Array(String) params with the quoted-text deserializer, which needs
@@ -82,4 +82,36 @@ Deno.test('arr2 rejects nothing structurally -- length is the caller contract', 
   // wrong-length vector must fail there rather than silently producing bad SQL here.
   assertEquals(arr2([[1, 2, 3]]), '[[1,2,3]]');
   assertThrows(() => JSON.parse('[[1,2'), SyntaxError);
+});
+
+Deno.test('venue copy must cover the exact retrieved candidate set before persistence', () => {
+  const complete = validateVenuePitches(
+    ['a', 'b'],
+    [
+      { venue_id: 'a', pitch: '  Good for talking.  ' },
+      { venue_id: 'b', pitch: 'A shared activity.' },
+    ],
+  );
+  assertEquals([...complete], [
+    ['a', 'Good for talking.'],
+    ['b', 'A shared activity.'],
+  ]);
+
+  // A parsed Claude object may still omit, duplicate, or invent ids. Every one previously
+  // produced an apparently successful ballot with empty durable copy for at least one option.
+  assertThrows(
+    () => validateVenuePitches(['a', 'b'], [{ venue_id: 'a', pitch: 'Only one.' }]),
+    Error,
+    'omitted a candidate',
+  );
+  assertThrows(
+    () => validateVenuePitches(['a'], [{ venue_id: 'invented', pitch: 'No.' }]),
+    Error,
+    'unknown venue id',
+  );
+  assertThrows(
+    () => validateVenuePitches(['a'], [{ venue_id: 'a', pitch: '   ' }]),
+    Error,
+    'empty copy',
+  );
 });

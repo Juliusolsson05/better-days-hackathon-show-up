@@ -35,8 +35,15 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
       _loading = true;
       _error = null;
     });
+    final group = widget.state.group!;
+    if (!group.venueVoteOpen && group.venueStatus != VenueStatus.chosen) {
+      // Legacy venues reuse the venue presentation model, but they were selected before the
+      // anonymous-ballot protocol existed. Avoid even issuing ballot reads for their synthetic id;
+      // most importantly, the same state gate below prevents that id from ever being written.
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     try {
-      final group = widget.state.group!;
       final vote = await widget.state.repo.myVenueVote(group.id);
       final tally = await widget.state.repo.venueTally(group.id);
       if (!mounted) return;
@@ -53,9 +60,7 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
 
   Future<void> _vote(String optionId) async {
     final group = widget.state.group!;
-    // chosenVenueId is the durable finalization signal. Once it exists, a stale card must not
-    // let a late tap rewrite the ballot after the product has already announced a destination.
-    if (_voting || group.chosenVenueId != null) return;
+    if (_voting || !group.venueVoteOpen) return;
 
     final confirmedVote = _myVote;
     setState(() {
@@ -127,7 +132,7 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
           ),
           const SizedBox(height: 10),
           Text(
-            group.chosenVenueId == null
+            group.venueVoteOpen
                 ? 'Anonymous. Nobody sees who picked what.'
                 : 'The result is shared. Individual ballots stay private.',
             style: Theme.of(context).textTheme.bodySmall,
@@ -169,8 +174,8 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
 
   Widget _option(VenueOption venue, int votes) {
     final mine = _myVote == venue.id;
-    final finalized = widget.state.group!.chosenVenueId != null;
-    final selected = widget.state.group!.chosenVenueId == venue.id;
+    final finalized = !widget.state.group!.venueVoteOpen;
+    final selected = widget.state.group!.chosenVenue?.id == venue.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(

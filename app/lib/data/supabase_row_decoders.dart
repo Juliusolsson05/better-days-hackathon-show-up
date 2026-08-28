@@ -36,6 +36,14 @@ VenueOption decodeVenueOptionRow(Map<String, dynamic> row) => VenueOption(
   lng: _double(row['lng']),
 );
 
+VenueStatus decodeVenueStatus(Object? value) {
+  final name = _string(value);
+  for (final status in VenueStatus.values) {
+    if (status.name == name) return status;
+  }
+  throw FormatException('Expected a known venue_status, got $value');
+}
+
 /// Groups created before grounded retrieval keep one JSON venue. It is decoded only when no
 /// typed options exist, so an in-flight deployment can upgrade without blanking the map.
 VenueOption? decodeLegacyVenue(Object? value, String groupId) {
@@ -92,6 +100,20 @@ MutualContact decodeMutualContactRow(
   phone: _requiredString(row, 'phone'),
   photoUrl: signedPhotoUrl,
 );
+
+ReceivedReflection decodeReceivedReflectionRow(
+  Map<String, dynamic> row, {
+  String? signedPhotoUrl,
+}) {
+  final profile = _requiredMap(row, 'profiles');
+  return ReceivedReflection(
+    authorId: _requiredString(row, 'user_id'),
+    authorName: _requiredString(profile, 'display_name'),
+    authorAvatar: _string(profile['avatar']) ?? '🙂',
+    text: _requiredString(row, 'what_stuck'),
+    authorPhotoUrl: signedPhotoUrl,
+  );
+}
 
 Map<String, dynamic> nestedMap(Map<String, dynamic> row, String key) =>
     _requiredMap(row, key);

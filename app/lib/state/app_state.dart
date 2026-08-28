@@ -111,6 +111,27 @@ class AppState extends ChangeNotifier {
     unawaited(armLadder());
   }
 
+  /// Loads the group context a time-compressed demo needs without replaying entry side effects.
+  ///
+  /// The ordinary room transition deliberately requests notification permission through
+  /// [enterGroup]. A jump from signup to post-event feedback is pretending the meetup already
+  /// happened, so replaying that transition would show a three-days-before permission prompt at
+  /// the end of the story. This method prepares only server/repository-owned facts and leaves the
+  /// caller responsible for the phase transition. It never creates a group; the gated demo UI may
+  /// ask MockRepository to provide its fixture, while Supabase remains read-only here.
+  Future<bool> prepareGroupForDemo() async {
+    final preparedGroup = await repo.currentGroup();
+    if (preparedGroup == null) {
+      group = null;
+      assignment = null;
+      return false;
+    }
+    final preparedAssignment = await repo.assignment(preparedGroup.id);
+    group = preparedGroup;
+    assignment = preparedAssignment;
+    return true;
+  }
+
   /// Requests permission and schedules the five rungs.
   ///
   /// [demo] compresses the ladder into seconds so it can be shown on stage; the real one

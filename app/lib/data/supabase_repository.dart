@@ -46,12 +46,10 @@ class SupabaseRepository implements Repository {
   @override
   Future<bool> hasProfile() async {
     if (_auth.currentUser == null) return false;
-    final row = await _client
-        .from('profiles')
-        .select('id')
-        .eq('id', _userId)
-        .maybeSingle();
-    return row != null;
+    // Phone cannot be selected directly without also exposing it to groupmates through the
+    // shared profile RLS policy. The security-definer predicate checks that private column and
+    // embedding readiness without ever returning either value to the device.
+    return await _client.rpc<bool>('profile_ready');
   }
 
   @override
@@ -203,12 +201,45 @@ class SupabaseRepository implements Repository {
 
     return Group(
       id: groupId,
-      eventAt: DateTime.parse(groupRow['event_at'] as String),
+      // PostgREST serializes timestamptz as an offset/UTC instant. Every presentation surface
+      // formats Group.eventAt directly, so keeping the parsed UTC object here makes an SF 7pm
+      // meetup appear as 2am/3am on the device. Convert once at the repository boundary rather
+      // than asking chat, notifications, and future screens to remember an infrastructure detail.
+      eventAt: DateTime.parse(groupRow['event_at'] as String).toLocal(),
       members: members,
       venueOptions: venues,
       activity: groupRow['activity'] as String,
       chosenVenueId: nullableString(groupRow['chosen_venue_id']),
     );
+  }
+
+  @override
+  Future<RsvpStatus> myRsvp(String groupId) async {
+    final row = await _client
+        .from('rsvps')
+        .select('status')
+        .eq('group_id', groupId)
+        .eq('user_id', _userId)
+        .maybeSingle();
+    return RsvpStatus.values.firstWhere(
+      (status) => status.name == row?['status'],
+      orElse: () => RsvpStatus.pending,
+    );
+  }
+
+  @override
+  Future<void> setRsvp(String groupId, RsvpStatus status) async {
+    if (status == RsvpStatus.pending) {
+      throw ArgumentError('RSVP can only be confirmed or declined by the user');
+    }
+    await _client.from('rsvps').upsert({
+      'group_id': groupId,
+      'user_id': _userId,
+      'status': status.name,
+    }, onConflict: 'group_id,user_id');
+    // Postgres is the product fact. The funnel may observe it only after that write succeeds,
+    // so a ClickHouse outage cannot create an RSVP the app itself does not have.
+    await track('rsvp', groupId: groupId, props: {'status': status.name});
   }
 
   /// Messages this device has sent but not yet seen echoed back, per group.
@@ -383,6 +414,11 @@ class SupabaseRepository implements Repository {
       'user_id': _userId,
       'option_id': optionId,
     }, onConflict: 'group_id,user_id');
+    await track(
+      'venue_voted',
+      groupId: groupId,
+      props: {'option_id': optionId},
+    );
   }
 
   @override
@@ -470,14 +506,44 @@ class SupabaseRepository implements Repository {
     String text, {
     bool wasFallback = false,
   }) async {
-    final target = wasFallback ? null : (await assignment(groupId)).targetId;
-    await _client.from('reflections').upsert({
-      'group_id': groupId,
-      'user_id': _userId,
-      'about_user': target,
-      'what_stuck': text,
-      'was_fallback': wasFallback,
-    }, onConflict: 'group_id,user_id');
+    // The assignment target is private, server-owned matching output. Sending it back from Flutter
+    // made the client an authority over who receives a reflection, while direct-table upsert also
+    // depended on a fragile combination of INSERT and UPDATE RLS policies. The RPC derives both
+    // author and target inside Postgres and performs the retry-safe write as one guarded protocol;
+    // Flutter supplies only the two pieces of user intent it can legitimately own.
+    await _client.rpc<void>(
+      'submit_reflection',
+      params: reflectionSubmissionParams(
+        groupId: groupId,
+        text: text,
+        wasFallback: wasFallback,
+      ),
+    );
+    await track('answered', groupId: groupId, props: {'fallback': wasFallback});
+  }
+
+  @override
+  Future<List<ReceivedReflection>> receivedReflections(String groupId) async {
+    // The SELECT intentionally asks for the group's rows without an about_user client filter.
+    // `read reflections after writing own` is the confidentiality boundary: it returns only
+    // notes addressed to auth.uid() and only after this user wrote theirs. Duplicating that rule
+    // in Dart would mean private text had already crossed the device boundary before filtering.
+    final rows = await _client
+        .from('reflections')
+        .select(
+          'user_id,what_stuck,profiles!reflections_user_id_fkey(display_name,avatar,photo_url)',
+        )
+        .eq('group_id', groupId);
+
+    return Future.wait(
+      rows.map((row) async {
+        final profile = nestedMap(row, 'profiles');
+        final signedPhoto = await _signedPhotoUrl(
+          nullableString(profile['photo_url']),
+        );
+        return decodeReceivedReflectionRow(row, signedPhotoUrl: signedPhoto);
+      }),
+    );
   }
 
   @override
@@ -507,6 +573,17 @@ class SupabaseRepository implements Repository {
     await _client
         .from('attendance_votes')
         .upsert(rows, onConflict: 'group_id,voter_id,subject_id');
+    // The relational ballots are the product fact and must commit before the analytical funnel can
+    // observe this step. Emit only anonymous counts: member ids are unnecessary for conversion
+    // analysis and would turn a coarse event stream into a shadow copy of private attendance votes.
+    await track(
+      'attended',
+      groupId: groupId,
+      props: {
+        'evaluated_count': rows.length,
+        'showed_up_count': rows.where((row) => row['showed_up'] == true).length,
+      },
+    );
   }
 
   @override
@@ -532,6 +609,15 @@ class SupabaseRepository implements Repository {
       'set_contact_selections',
       params: {'grp': groupId, 'selected': selectedIds.toList(growable: false)},
     );
+    // This measures the user's decision to share, not reciprocity. The mutual result can arrive
+    // later as groupmates finish, while this source write is already durable and attributable.
+    if (selectedIds.isNotEmpty) {
+      await track(
+        'number_shared',
+        groupId: groupId,
+        props: {'selected_count': selectedIds.length},
+      );
+    }
   }
 
   @override
@@ -549,6 +635,17 @@ class SupabaseRepository implements Repository {
         return decodeMutualContactRow(row, signedPhotoUrl: signedPhoto);
       }),
     );
+  }
+
+  @override
+  Future<bool> hasCompletedAfterFlow(String groupId) async {
+    final row = await _client
+        .from('after_flow_completions')
+        .select('group_id')
+        .eq('group_id', groupId)
+        .eq('user_id', _userId)
+        .maybeSingle();
+    return row != null;
   }
 
   Future<String?> _signedPhotoUrl(String? objectPath) async {
@@ -569,6 +666,19 @@ class SupabaseRepository implements Repository {
     }
   }
 }
+
+/// The public client payload for `submit_reflection`.
+///
+/// Keeping this tiny map testable protects a confidentiality boundary that a widget test cannot
+/// observe: a future refactor must not add `user_id` or `about_user` back to the request. Postgres
+/// derives those identities from auth.uid() and member_assignments, so accepting either from a
+/// modified client would make the private assignment contract decorative.
+@visibleForTesting
+Map<String, dynamic> reflectionSubmissionParams({
+  required String groupId,
+  required String text,
+  required bool wasFallback,
+}) => {'grp': groupId, 'reflection_text': text, 'fallback': wasFallback};
 
 /// RFC 4122 version 4, from the platform CSPRNG.
 ///

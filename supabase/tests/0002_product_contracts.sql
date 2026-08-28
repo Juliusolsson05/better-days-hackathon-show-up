@@ -125,6 +125,20 @@ begin
     perform set_config('showup.test.group_one', g1::text, true);
     perform set_config('showup.test.group_two', g2::text, true);
 
+    -- User two's note about user one exists before user one writes anything. The authenticated
+    -- checks below prove this text remains invisible until reciprocity is satisfied; inserting it
+    -- as the owner here gives the later test a row to attack without weakening the RLS policy just
+    -- to arrange its fixture.
+    insert into public.reflections (
+        group_id, user_id, about_user, what_stuck, was_fallback
+    ) values (
+        g1,
+        '00000000-0000-4000-8000-000000000002'::uuid,
+        '00000000-0000-4000-8000-000000000001'::uuid,
+        'You made the first ten minutes feel easy.',
+        false
+    );
+
     begin
         perform public.replace_venue_options(g1, null::jsonb);
         raise exception 'null venue options unexpectedly succeeded';
@@ -375,6 +389,28 @@ begin
     end if;
     if exists (select 1 from public.mutual_contacts(own_group)) then
         raise exception 'one-way contact selection disclosed a phone number';
+    end if;
+
+    if exists (select 1 from public.reflections where group_id = own_group) then
+        raise exception 'received reflection was visible before the caller wrote their own';
+    end if;
+
+    -- Submission is an RPC because the outbound row must remain unselectable to its author while
+    -- still supporting an idempotent retry. It derives the recipient from the private assignment
+    -- instead of trusting a client-supplied groupmate UUID.
+    perform public.submit_reflection(
+        own_group,
+        'Tom made arriving alone much easier.',
+        false
+    );
+
+    if (select count(*) from public.reflections where group_id = own_group) <> 1
+       or not exists (
+           select 1 from public.reflections
+           where group_id = own_group
+             and user_id = '00000000-0000-4000-8000-000000000002'::uuid
+       ) then
+        raise exception 'reciprocal reflection gate hid the addressed note or leaked another row';
     end if;
 end;
 $$;

@@ -4,41 +4,74 @@
 // Runs server-side rather than from the app because it holds three secrets the phone must
 // never see, and because the ClickHouse write has no client-safe equivalent.
 
-import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
-import { ch, arr, populationMean, emit } from '../_shared/clickhouse.ts';
-import { embed, center, profileText, DIMS } from '../_shared/voyage.ts';
-import { extractTags } from '../_shared/claude.ts';
+import { createClient } from "npm:@supabase/supabase-js@2.47.10";
+import { arr, ch, emit, populationMean } from "../_shared/clickhouse.ts";
+import { center, DIMS, embed, profileText } from "../_shared/voyage.ts";
+import { extractTags } from "../_shared/claude.ts";
+import { normalizeStanceTags } from "../_shared/matching.ts";
+import {
+  assertOwnedProfilePhotoPath,
+  parseProfileSubmission,
+  ProfileSubmissionError,
+} from "../_shared/profile_submission.ts";
 
 Deno.serve(async (req) => {
   try {
-    const auth = req.headers.get('Authorization');
-    if (!auth) return new Response('unauthorized', { status: 401 });
+    const auth = req.headers.get("Authorization");
+    if (!auth) return new Response("unauthorized", { status: 401 });
 
-    // Anon key + the caller's JWT, so RLS still applies and a user cannot write a profile
-    // for somebody else by passing a different id.
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+    // This client has exactly one job: turn the bearer token into a verified user id. Profile
+    // writes cannot use the same RLS role because any permission that lets this function stamp
+    // embedded_at also lets a modified app call PostgREST directly and self-stamp readiness.
+    const caller = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: auth } } },
     );
 
-    const { data: user } = await supabase.auth.getUser();
-    if (!user?.user) return new Response('unauthorized', { status: 401 });
+    const { data: user } = await caller.auth.getUser();
+    if (!user?.user) return new Response("unauthorized", { status: 401 });
     const uid = user.user.id;
 
-    const body = await req.json() as {
-      display_name: string; passion: string; tags: string[];
-      city: string; availability: string[]; photo_url?: string;
-    };
+    // Only the already-verified uid crosses into the privileged client. There is deliberately no
+    // user id in the request contract, so service-role authority cannot be redirected toward
+    // another profile by changing JSON. Migration 0009 removes the equivalent direct client path.
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
 
-    const { error: upErr } = await supabase.from('profiles').upsert({
+    let input: unknown;
+    try {
+      input = await req.json();
+    } catch {
+      // Malformed JSON is a caller error. Treating it as an internal failure made harmless app
+      // bugs indistinguishable from broken infrastructure and invited retries that could never
+      // succeed.
+      return Response.json({ error: "invalid body: expected JSON" }, {
+        status: 400,
+      });
+    }
+
+    const body = parseProfileSubmission(input);
+    assertOwnedProfilePhotoPath(body.photo_url, uid);
+
+    const { error: upErr } = await db.from("profiles").upsert({
       id: uid,
       display_name: body.display_name,
+      avatar: body.avatar,
       passion: body.passion,
       tags: body.tags,
       city: body.city,
       availability: body.availability,
-      photo_url: body.photo_url ?? null,
+      phone: body.phone,
+      photo_url: body.photo_url,
+      // Postgres is the readiness gate used by matching. An edit must become temporarily
+      // unmatchable before external work starts; otherwise a failed Voyage/Claude/ClickHouse
+      // call leaves a newly edited OLTP profile stamped ready while ClickHouse still contains
+      // its old vector. Keeping the row with a null stamp also makes first-submit failures
+      // safely retryable instead of stranding the user behind a half-created profile.
+      embedded_at: null,
     });
     if (upErr) throw upErr;
 
@@ -50,7 +83,9 @@ Deno.serve(async (req) => {
     ]);
 
     const vec = center(vectors[0], mean);
-    if (vec.length !== DIMS) throw new Error(`expected ${DIMS} dims, got ${vec.length}`);
+    if (vec.length !== DIMS) {
+      throw new Error(`expected ${DIMS} dims, got ${vec.length}`);
+    }
 
     // ReplacingMergeTree keyed on user_id, so an edited profile overwrites rather than
     // accumulating duplicate rows for the same person.
@@ -64,7 +99,15 @@ Deno.serve(async (req) => {
       {
         user_id: uid,
         embedding: arr(vec),
-        tags: arr([...tags.topics, ...tags.stance_flags.map((s) => `stance:${s}`)]),
+        tags: arr([
+          ...tags.topics,
+          // Claude's schema constrains the shape, not its vocabulary. Persisting canonical
+          // stance tags makes ClickHouse's fast exclusion reliable for new profiles, while the
+          // matcher keeps a normalized runtime guard for legacy rows.
+          ...normalizeStanceTags(
+            tags.stance_flags.map((stance) => `stance:${stance}`),
+          ),
+        ]),
         city: body.city,
         availability: arr(body.availability),
         energy: tags.energy,
@@ -73,14 +116,30 @@ Deno.serve(async (req) => {
       },
     );
 
-    const { error: stampErr } = await supabase.from('profiles')
-      .update({ embedded_at: new Date().toISOString() }).eq('id', uid);
+    const { error: stampErr } = await db.from("profiles")
+      .update({ embedded_at: new Date().toISOString() }).eq("id", uid);
     if (stampErr) throw stampErr;
-    await emit('signup', uid, null, { city: body.city, topics: tags.topics });
+    // At this point Postgres and ClickHouse agree that the profile is ready. Analytics is an
+    // observer of that fact, not another participant in the commit: surfacing an event-stream
+    // outage as a 500 made the app invite a retry that temporarily cleared embedded_at and paid
+    // for the same embedding work again even though the first submission had succeeded.
+    try {
+      await emit("signup", uid, null, {
+        city: body.city,
+        topics: tags.topics,
+      });
+    } catch (analyticsErr) {
+      console.error("profile committed but signup analytics was dropped", analyticsErr);
+    }
 
     return Response.json({ ok: true, tags });
   } catch (err) {
+    if (err instanceof ProfileSubmissionError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
+    // SDK and database errors sometimes include request bodies, SQL details, or upstream
+    // response text. Those belong in server logs, not in an unauthenticated HTTP response.
     console.error(err);
-    return Response.json({ error: String(err) }, { status: 500 });
+    return Response.json({ error: "internal server error" }, { status: 500 });
   }
 });

@@ -42,6 +42,10 @@ abstract class Repository {
   /// Null until the matching sweep has placed you in a group.
   Future<Group?> currentGroup();
 
+  /// Membership is server-created; RSVP is the one decision the matched person owns.
+  Future<RsvpStatus> myRsvp(String groupId);
+  Future<void> setRsvp(String groupId, RsvpStatus status);
+
   /// The group chat is the product surface, so this is the primary stream.
   Stream<List<Message>> watchMessages(String groupId);
   Future<void> sendMessage(String groupId, String body);
@@ -81,6 +85,12 @@ abstract class Repository {
     String text, {
     bool wasFallback = false,
   });
+
+  /// Notes groupmates wrote specifically about the caller, disclosed only after the caller has
+  /// written their own. The database owns that reciprocity gate; implementations must never load
+  /// a wider group reflection set and filter it in Flutter.
+  Future<List<ReceivedReflection>> receivedReflections(String groupId);
+
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp);
 
   /// True once the group has voted and the majority marked you absent. The PRD's flaking
@@ -91,4 +101,8 @@ abstract class Repository {
   /// Selections are one-way and private. Nothing tells anyone they were not selected.
   Future<void> selectContacts(String groupId, Set<String> selectedIds);
   Future<List<MutualContact>> mutualContacts(String groupId);
+
+  /// Completion is separate from whether any numbers were selected: choosing nobody is still
+  /// a valid, completed after-meetup flow and must not send the person through it on every launch.
+  Future<bool> hasCompletedAfterFlow(String groupId);
 }

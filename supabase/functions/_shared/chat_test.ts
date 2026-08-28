@@ -4,8 +4,8 @@
 //
 // Run: deno test supabase/functions/_shared/chat_test.ts
 
-import { assertEquals, assertStringIncludes } from 'jsr:@std/assert@1';
-import { openingLine, type ChatMember } from './chat.ts';
+import { assertEquals, assertStringIncludes, assertThrows } from 'jsr:@std/assert@1';
+import { openingLine, parseOpenChatRequest, type ChatMember } from './chat.ts';
 
 const m = (id: string, ...tags: string[]): ChatMember =>
   ({ id, display_name: id, tags });
@@ -62,4 +62,22 @@ Deno.test('falls back cleanly when nothing is shared', () => {
 Deno.test('one person listing a tag twice does not make it shared', () => {
   const line = openingLine([m('a', 'chess', 'chess'), m('b', 'baking')]);
   assertEquals(line.includes('chess'), false);
+});
+
+Deno.test('malformed open-chat requests cannot fall through to the bulk backfill path', () => {
+  // The entrypoint used to map malformed JSON to {}, whose API meaning is "every group". The
+  // parser cannot observe JSON syntax, but it owns the second boundary: scalars and invalid ids
+  // fail before a service-role query can be selected.
+  assertThrows(() => parseOpenChatRequest(null), Error, 'JSON object');
+  assertThrows(() => parseOpenChatRequest([]), Error, 'JSON object');
+  assertThrows(
+    () => parseOpenChatRequest({ group_id: 'not-a-uuid' }),
+    Error,
+    'group_id must be a UUID',
+  );
+  assertEquals(parseOpenChatRequest({}), { groupId: null });
+  assertEquals(
+    parseOpenChatRequest({ group_id: '00000000-0000-4000-8000-000000000001' }),
+    { groupId: '00000000-0000-4000-8000-000000000001' },
+  );
 });

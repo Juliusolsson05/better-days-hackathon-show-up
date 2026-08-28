@@ -66,4 +66,26 @@ void main() {
       expect(venue?.hasLocation, isTrue);
     },
   );
+
+  test(
+    'received reflection rows keep private text behind the decoder boundary',
+    () {
+      final note = decodeReceivedReflectionRow({
+        'user_id': 'user-b',
+        'what_stuck': 'You made the first ten minutes feel easy.',
+        'profiles': {
+          'display_name': 'Tom',
+          'avatar': '🎧',
+          // The durable storage path is intentionally not decoded into the model; the
+          // repository must replace it with a short-lived URL after Storage authorizes it.
+          'photo_url': 'user-b/profile.jpg',
+        },
+      }, signedPhotoUrl: 'https://signed.test/tom-reflection.jpg');
+
+      expect(note.authorId, 'user-b');
+      expect(note.authorName, 'Tom');
+      expect(note.text, 'You made the first ten minutes feel easy.');
+      expect(note.authorPhotoUrl, 'https://signed.test/tom-reflection.jpg');
+    },
+  );
 }

@@ -12,6 +12,22 @@ command -v deno >/dev/null || { echo "deno is required"; exit 1; }
 command -v flutter >/dev/null || { echo "flutter is required"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required"; exit 1; }
 
+# Supabase records the numeric filename prefix as the migration identity. A merge can look clean
+# to Git while placing two independently authored files under the same version; one then shadows
+# or blocks the other during reset/push, so every runtime check after it is testing a schema that
+# cannot actually be deployed. Keep this check before any expensive toolchain work and derive the
+# list from disk rather than maintaining another migration manifest that can drift the same way.
+DUPLICATE_MIGRATION_VERSIONS="$(
+  rg --files supabase/migrations \
+    | sed -E 's#^.*/([0-9]+)_.*#\1#' \
+    | sort \
+    | uniq -d
+)"
+if [[ -n "$DUPLICATE_MIGRATION_VERSIONS" ]]; then
+  echo "duplicate Supabase migration version(s): $DUPLICATE_MIGRATION_VERSIONS"
+  exit 1
+fi
+
 # embedding_mean holds BOTH the profile and venue centroids. A global truncate here once
 # erased the only state required to interpret the already-loaded venue vectors, so keep this
 # cheap static tripwire beside the checks everyone runs before deploy. This deliberately

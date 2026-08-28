@@ -7,6 +7,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.47.10";
 import { arr, ch, emit } from "../_shared/clickhouse.ts";
 import { planGroup } from "../_shared/claude.ts";
 import { openChat } from "../_shared/chat.ts";
+import { haveOpposingStances, opposingStances } from "../_shared/matching.ts";
 import { nextSlot } from "../_shared/schedule.ts";
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
@@ -94,8 +95,11 @@ Deno.serve(async (req) => {
       // The seed's own vector, fetched separately. Inlining it as a scalar subquery means
       // a missing row yields [] rather than an error, and cosineDistance then fails with
       // "arrays have different sizes" from inside the scan, which is much harder to read.
-      const { rows: self } = await ch<{ embedding: number[] }>(
-        `SELECT embedding FROM profile_vectors FINAL WHERE user_id = {self:UUID} LIMIT 1`,
+      const { rows: self } = await ch<{
+        embedding: number[];
+        tags: string[];
+      }>(
+        `SELECT embedding, tags FROM profile_vectors FINAL WHERE user_id = {self:UUID} LIMIT 1`,
         { self: seed },
       );
       if (!self.length) {
@@ -103,7 +107,10 @@ Deno.serve(async (req) => {
         skipped.push(seed);
         continue;
       }
-      const seedTags: string[] = unassigned.get(seed)!.tags ?? [];
+      // Postgres stores the interests people picked; ClickHouse stores Claude's derived stance
+      // flags alongside the vector. Reading the former here made the opposition filter a no-op
+      // for every normal profile even though the candidate side correctly used ClickHouse.
+      const seedTags = self[0].tags ?? [];
 
       // Restricted to the real pool with has(), because profile_vectors also holds a
       // million synthetic rows that exist nowhere in Postgres -- without this every
@@ -147,6 +154,7 @@ Deno.serve(async (req) => {
       // near-identical people, which is a dull evening; we want the same topic
       // neighbourhood with variety in temperament.
       const picked = [seed];
+      const pickedStances = new Map<string, string[]>([[seed, seedTags]]);
       const seenEnergy = new Set<string>();
       for (const pass of [1, 2]) {
         for (const cand of rows) {
@@ -154,9 +162,19 @@ Deno.serve(async (req) => {
           if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) {
             continue;
           }
+          // NOT hasAny is intentionally retained above as the cheap seed/candidate path for
+          // canonical rows. This guard is still authoritative: it handles legacy/free-form
+          // spellings and checks every person already picked, not merely the seed. Otherwise
+          // two opposed candidates could land together when the seed held neither stance.
+          if (
+            [...pickedStances.values()].some((tags) =>
+              haveOpposingStances(tags, cand.tags ?? [])
+            )
+          ) continue;
           if (pass === 1 && seenEnergy.has(cand.energy)) continue;
           seenEnergy.add(cand.energy);
           picked.push(cand.user_id);
+          pickedStances.set(cand.user_id, cand.tags ?? []);
         }
       }
       if (picked.length < MIN_GROUP) {
@@ -267,7 +285,12 @@ Deno.serve(async (req) => {
       }
 
       for (const id of picked) unassigned.delete(id);
-      await Promise.all(
+      // form_group is already committed and is the product fact. A ClickHouse event failure must
+      // not turn that success into a 500 or abort the remaining pool: the retry-safe run key would
+      // correctly refuse to duplicate this group, but every person after it would remain unmatched
+      // until an operator happened to run the sweep again. allSettled keeps per-member analytics
+      // best-effort without hiding which observations were dropped from function logs.
+      const eventResults = await Promise.allSettled(
         picked.map((id) =>
           emit("group_formed", id, groupId, {
             seed_distance: seedDistance,
@@ -275,6 +298,14 @@ Deno.serve(async (req) => {
           })
         ),
       );
+      for (const result of eventResults) {
+        if (result.status === "rejected") {
+          console.error(
+            `group ${groupId} committed but group_formed analytics was dropped`,
+            result.reason,
+          );
+        }
+      }
       formed.push(groupId);
     }
 
@@ -353,26 +384,6 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-/**
- * Stance tags are written as `stance:<position>`. Two people holding opposite positions on
- * the same subject embed almost identically -- the embedding cannot separate them, so the
- * tag has to. Kept crude on purpose: an explicit opposition table beats an LLM call here.
- */
-const OPPOSED: Record<string, string[]> = {
-  vegan: ["hunting", "bbq", "steakhouse"],
-  hunting: ["vegan", "vegetarian", "animal_rights"],
-  sober: ["heavy_drinking", "bar_crawl"],
-  religious: ["militant_atheist"],
-};
-function opposingStances(tags: string[]): string[] {
-  const out = new Set<string>();
-  for (const t of tags) {
-    if (!t.startsWith("stance:")) continue;
-    for (const o of OPPOSED[t.slice(7)] ?? []) out.add(`stance:${o}`);
-  }
-  return [...out];
-}
 
 /**
  * Next occurrence of the slot's weekday at the slot's hour, in Pacific time. The edge

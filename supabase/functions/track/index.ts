@@ -13,40 +13,10 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
 import { emit } from '../_shared/clickhouse.ts';
-
-/**
- * Events the client is allowed to append.
- *
- * A whitelist rather than free-form, because this endpoint is reachable by anyone holding
- * the anon key -- which ships inside the app binary and is therefore public by design.
- * Without it, the table backing every number we put on stage is writable with arbitrary
- * `name` values by anyone who reads the bundle. Adding a stage means adding it here, and
- * that is the intended amount of friction.
- *
- * Server-emitted names (signup, group_formed) are deliberately NOT here: they are facts
- * the server establishes, and letting a client assert them would let it claim a group
- * formed that never did.
- */
-const ALLOWED = new Set([
-  'notif_sent',      // a ladder rung was scheduled on device
-  'notif_opened',    // a rung was tapped
-  'rsvp',            // attend / don't -- the one decision the product asks for
-  'chat_opened',     // the group chat was actually looked at
-  'chat_first_message', // this user said something for the first time in this group
-  'venue_voted',
-  'attended',
-  'answered',        // the assigned question was reflected on
-  'number_shared',
-]);
-
-/** One request may carry a small batch: a phone coming back online flushes what it queued. */
-const MAX_BATCH = 20;
-
-interface InEvent {
-  name: string;
-  group_id?: string | null;
-  props?: Record<string, unknown>;
-}
+import {
+  parseTrackingRequest,
+  TrackingRequestError,
+} from '../_shared/tracking.ts';
 
 Deno.serve(async (req) => {
   try {
@@ -65,21 +35,13 @@ Deno.serve(async (req) => {
     if (!user?.user) return new Response('unauthorized', { status: 401 });
     const uid = user.user.id;
 
-    const body = await req.json().catch(() => null) as
-      | { events?: InEvent[]; name?: string; group_id?: string | null; props?: Record<string, unknown> }
-      | null;
-    if (!body) return Response.json({ error: 'bad json' }, { status: 400 });
-
-    // Accept either one event or a batch, so the client does not need two code paths.
-    const incoming: InEvent[] = body.events ??
-      (body.name ? [{ name: body.name, group_id: body.group_id, props: body.props }] : []);
-    if (!incoming.length) return Response.json({ error: 'no events' }, { status: 400 });
-    if (incoming.length > MAX_BATCH) {
-      return Response.json({ error: `at most ${MAX_BATCH} events` }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: 'body must be valid JSON' }, { status: 400 });
     }
-
-    const rejected = incoming.filter((e) => !ALLOWED.has(e.name)).map((e) => e.name);
-    const accepted = incoming.filter((e) => ALLOWED.has(e.name));
+    const { accepted, rejected } = parseTrackingRequest(body);
 
     // Group ids are checked against the caller's own memberships rather than trusted.
     // A forged group_id would not leak anything -- events are write-only from here -- but
@@ -118,6 +80,9 @@ Deno.serve(async (req) => {
     // server should not have its whole batch dropped because one name is new.
     return Response.json({ written, rejected });
   } catch (err) {
+    if (err instanceof TrackingRequestError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
     console.error(err);
     return Response.json({ error: String(err) }, { status: 500 });
   }

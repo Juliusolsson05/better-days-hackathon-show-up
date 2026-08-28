@@ -132,6 +132,39 @@ const VenuePitches = z.object({
   })),
 });
 
+type VenuePitch = { venue_id: string; pitch: string };
+
+/** Turn model output into the exact, complete ballot copy contract. */
+export function validateVenuePitches(
+  venueIds: readonly string[],
+  options: readonly VenuePitch[],
+): Map<string, string> {
+  const expected = new Set(venueIds);
+  const out = new Map<string, string>();
+
+  for (const option of options) {
+    // Structured output proves the field types, not the relationship to the candidates we sent.
+    // Silently ignoring an invented id (the old behavior) also silently leaves a real option with
+    // an empty pitch, which then becomes durable because replace_venue_options() correctly treats
+    // the ballot as immutable after voting begins. Reject the whole proposal while the group is
+    // still retryable instead of persisting a half-modelled product surface.
+    if (!expected.has(option.venue_id)) {
+      throw new Error('venue pitch returned an unknown venue id');
+    }
+    if (out.has(option.venue_id)) {
+      throw new Error('venue pitch returned a duplicate venue id');
+    }
+    const pitch = option.pitch.trim();
+    if (!pitch) throw new Error('venue pitch returned empty copy');
+    out.set(option.venue_id, pitch);
+  }
+
+  if (out.size !== expected.size) {
+    throw new Error('venue pitch omitted a candidate');
+  }
+  return out;
+}
+
 const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
 /**
@@ -175,10 +208,8 @@ export async function pitchVenues(
     throw new Error("venue pitch returned no parsed output");
   }
 
-  const sent = new Set(venues.map((v) => v.venue_id));
-  const out = new Map<string, string>();
-  for (const o of res.parsed_output.options) {
-    if (sent.has(o.venue_id)) out.set(o.venue_id, o.pitch);
-  }
-  return out;
+  return validateVenuePitches(
+    venues.map((venue) => venue.venue_id),
+    res.parsed_output.options,
+  );
 }

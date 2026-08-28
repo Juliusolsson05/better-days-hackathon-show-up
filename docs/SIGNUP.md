@@ -1,7 +1,7 @@
 # Signup against the real backend
 
-The app defaults to `MockRepository` and needs nothing. To run the signup flow against
-Supabase (email OTP → photo upload → `submit-profile`):
+The app defaults to Supabase so a normal or release run exercises the real integration.
+To run the signup flow (email OTP → photo upload → `submit-profile`):
 
 ```bash
 cd app && flutter run \
@@ -10,8 +10,8 @@ cd app && flutter run \
   --dart-define=SUPABASE_ANON_KEY=<anon key from `supabase start`>
 ```
 
-Without `USE_SUPABASE=true`, `main()` never calls `Supabase.initialize` and the app is
-mock-only — the auth screen does not appear.
+Set `USE_SUPABASE=false` only for an intentional fixture-only run. In that mode `main()`
+does not call `Supabase.initialize` and the auth screen does not appear.
 
 ## What the flow does
 

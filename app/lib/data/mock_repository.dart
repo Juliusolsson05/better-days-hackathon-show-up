@@ -81,6 +81,8 @@ class MockRepository implements Repository {
   Profile? _me;
   Group? _group;
   String? _myVote;
+  RsvpStatus _rsvp = RsvpStatus.pending;
+  bool _afterFlowComplete = false;
 
   final _tally = <String, int>{'v1': 2, 'v2': 1, 'v3': 0};
   final _messages = <Message>[];
@@ -183,6 +185,19 @@ class MockRepository implements Repository {
   Future<Group?> currentGroup() async {
     await Future.delayed(_lag);
     return _group;
+  }
+
+  @override
+  Future<RsvpStatus> myRsvp(String groupId) async {
+    await Future.delayed(_lag);
+    return _rsvp;
+  }
+
+  @override
+  Future<void> setRsvp(String groupId, RsvpStatus status) async {
+    await Future.delayed(_lag);
+    _rsvp = status;
+    await track('rsvp', groupId: groupId);
   }
 
   @override
@@ -291,6 +306,22 @@ class MockRepository implements Repository {
   }) => Future.delayed(_lag);
 
   @override
+  Future<List<ReceivedReflection>> receivedReflections(String groupId) async {
+    await Future.delayed(_lag);
+    // One note is enough to keep the post-meetup read path reachable in a fixture run. Its shape
+    // mirrors what the RLS-filtered Postgres join returns; the mock does not invent a browseable
+    // set of every private reflection in the group.
+    return const [
+      ReceivedReflection(
+        authorId: 'u2',
+        authorName: 'Tom',
+        authorAvatar: '🎧',
+        text: 'You made arriving alone feel much less awkward.',
+      ),
+    ];
+  }
+
+  @override
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) =>
       Future.delayed(_lag);
 
@@ -309,6 +340,7 @@ class MockRepository implements Repository {
   Future<void> selectContacts(String groupId, Set<String> selectedIds) async {
     await Future.delayed(_lag);
     _selected = selectedIds;
+    _afterFlowComplete = true;
   }
 
   /// Only reciprocated choices come back. In the mock, Maya and Tom picked you; Priya did
@@ -327,6 +359,10 @@ class MockRepository implements Repository {
       );
     }).toList();
   }
+
+  @override
+  Future<bool> hasCompletedAfterFlow(String groupId) async =>
+      _afterFlowComplete;
 
   void dispose() {
     _chatter?.cancel();

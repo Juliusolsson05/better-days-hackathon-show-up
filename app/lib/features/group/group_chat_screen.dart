@@ -32,23 +32,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// keyboard animation, or viewport change can rebuild this screen many times without the
   /// user navigating; subscribing in build would leak channels and duplicate deliveries.
   ///
-  /// `late` also matters: State.widget is not attached while the State constructor runs.
-  /// The initializer is evaluated on first use, after Flutter has attached the immutable
-  /// group for this screen's lifetime.
-  late final Stream<List<Message>> _messages = widget.state.repo.watchMessages(
-    widget.state.group!.id,
-  );
+  /// This is mutable only for an explicit recovery attempt. An errored Supabase realtime stream
+  /// does not heal merely because StreamBuilder rebuilds; Retry must ask the repository for a new
+  /// channel. Ordinary builds never replace it, preserving the one-subscription invariant.
+  late Stream<List<Message>> _messages;
 
   /// The previous message count lets [_toBottom] distinguish a conversation update from
   /// an unrelated rebuild. Without that distinction, opening the keyboard would pull a user
   /// away from an older message they intentionally scrolled up to read.
   int _lastCount = 0;
   bool _hasSpoken = false;
+  RsvpStatus? _rsvp;
+  bool _savingRsvp = false;
+  String? _rsvpError;
 
   @override
   void initState() {
     super.initState();
     final groupId = widget.state.group!.id;
+    _messages = widget.state.repo.watchMessages(groupId);
+    unawaited(_loadRsvp(groupId));
 
     // Analytics records entering the actual product surface, not how often Flutter paints it.
     // Repository.track is fire-and-forget by contract so a telemetry outage cannot block chat.
@@ -71,6 +74,32 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         }
         unawaited(_refreshGroupProjection());
       });
+    }
+  }
+
+  Future<void> _loadRsvp(String groupId) async {
+    try {
+      final status = await widget.state.repo.myRsvp(groupId);
+      if (mounted) setState(() => _rsvp = status);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _rsvpError = 'RSVP unavailable. Tap to retry.');
+      }
+    }
+  }
+
+  Future<void> _setRsvp(RsvpStatus status) async {
+    setState(() {
+      _savingRsvp = true;
+      _rsvpError = null;
+    });
+    try {
+      await widget.state.repo.setRsvp(widget.state.group!.id, status);
+      if (mounted) setState(() => _rsvp = status);
+    } catch (_) {
+      if (mounted) setState(() => _rsvpError = 'That did not save. Try again.');
+    } finally {
+      if (mounted) setState(() => _savingRsvp = false);
     }
   }
 
@@ -138,6 +167,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _input.clear();
   }
 
+  void _retryMessages() {
+    // StreamBuilder cancels its subscription when the stream identity changes. Constructing the
+    // replacement only from this button avoids both dead-room retries that reuse a terminated
+    // channel and automatic reconnect loops that could hammer Supabase during an outage.
+    setState(() {
+      _messages = widget.state.repo.watchMessages(widget.state.group!.id);
+    });
+  }
+
   void _toBottom(int count) {
     final grew = count > _lastCount;
     _lastCount = count;
@@ -192,20 +230,41 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
       body: Column(
         children: [
+          _RsvpCard(
+            status: _rsvp,
+            busy: _savingRsvp,
+            error: _rsvpError,
+            onChanged: _setRsvp,
+            onRetry: () => _loadRsvp(group.id),
+          ),
           _VenueShortcut(group: group, onTap: _openGroup),
           Expanded(
             child: StreamBuilder<List<Message>>(
+              // StreamBuilder deliberately retains the previous snapshot when only `stream`
+              // changes. That is helpful for ordinary refreshes but would leave the old error
+              // banner visible until Supabase emits its first replacement snapshot. Keying the
+              // explicit retry stream starts recovery in a clean waiting state immediately.
+              key: ObjectKey(_messages),
               stream: _messages,
               builder: (context, snapshot) {
                 final messages = snapshot.data ?? const <Message>[];
                 _toBottom(messages.length);
-                return ListView.builder(
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) => _bubble(messages[index]),
+                return Column(
+                  children: [
+                    if (snapshot.hasError)
+                      _MessageStreamFailure(onRetry: _retryMessages),
+                    Expanded(
+                      child: ListView.builder(
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) =>
+                            _bubble(messages[index]),
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -330,6 +389,106 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageStreamFailure extends StatelessWidget {
+  const _MessageStreamFailure({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: surface,
+      borderRadius: BorderRadius.circular(inputRadius),
+      border: Border.all(color: negative),
+    ),
+    child: Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Messages lost connection.',
+            style: TextStyle(color: bodyInk, fontWeight: FontWeight.w600),
+          ),
+        ),
+        TextButton(onPressed: onRetry, child: const Text('Retry')),
+      ],
+    ),
+  );
+}
+
+class _RsvpCard extends StatelessWidget {
+  const _RsvpCard({
+    required this.status,
+    required this.busy,
+    required this.error,
+    required this.onChanged,
+    required this.onRetry,
+  });
+
+  final RsvpStatus? status;
+  final bool busy;
+  final String? error;
+  final ValueChanged<RsvpStatus> onChanged;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accentPale,
+        borderRadius: BorderRadius.circular(cardRadius),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(switch (status) {
+            RsvpStatus.confirmed => "You're in — we'll remind you.",
+            RsvpStatus.declined => "You can't make this one.",
+            RsvpStatus.pending => 'Can you make it?',
+            null => 'Loading your RSVP…',
+          }, style: const TextStyle(fontWeight: FontWeight.w700)),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: busy ? null : onRetry,
+              child: Text(error!, style: const TextStyle(color: negative)),
+            ),
+          ],
+          if (status != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: busy || status == RsvpStatus.confirmed
+                        ? null
+                        : () => onChanged(RsvpStatus.confirmed),
+                    child: const Text("I'm in"),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: busy || status == RsvpStatus.declined
+                        ? null
+                        : () => onChanged(RsvpStatus.declined),
+                    child: const Text("Can't make it"),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

@@ -115,14 +115,19 @@ supabase link --project-ref <ref>
 supabase db push
 supabase secrets set --env-file .env.functions
 supabase functions deploy
+./scripts/preflight.sh          # read-only hosted secret + migration gate
 
 clickhouse client --host <host> --secure --password <pw> < clickhouse/001_schema.sql
 python scripts/seed_archetypes.py
 clickhouse client --host <host> --secure --password <pw> < clickhouse/002_seed.sql
 
 cd app && flutter run \
+  --dart-define=USE_SUPABASE=true \
   --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...
 ```
+
+Supabase is the default for normal launches. Use `--dart-define=USE_SUPABASE=false` only
+when you intentionally want the fixture-only reference app.
 
 Full checklist, including the two steps that fail silently: `docs/INFRASTRUCTURE.md`.
 

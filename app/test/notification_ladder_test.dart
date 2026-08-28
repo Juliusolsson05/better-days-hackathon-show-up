@@ -1,5 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:showup/core/notifications.dart';
+import 'package:showup/data/mock_repository.dart';
+import 'package:showup/models/models.dart';
+import 'package:showup/state/app_state.dart';
+
+Group _group() => Group(
+  id: 'notification-test-group',
+  eventAt: DateTime(2030, 1, 1, 19),
+  members: const [Member(id: 'me', displayName: 'You', avatar: '🙂')],
+  venueOptions: const [],
+  activity: 'Conversation',
+);
 
 void main() {
   group('ladder ordering', () {
@@ -86,6 +97,51 @@ void main() {
           isNot(notificationIdFor('group-b', rung)),
         );
       }
+    });
+  });
+
+  group('app-state degradation', () {
+    test('a permission failure becomes observable disabled state', () async {
+      final repo = MockRepository();
+      addTearDown(repo.dispose);
+      var scheduled = false;
+      final state = AppState(
+        repo,
+        requestNotificationPermission: () async {
+          throw StateError('platform plugin unavailable');
+        },
+        scheduleNotificationLadder: (group, {demo = false}) async {
+          scheduled = true;
+        },
+      )..group = _group();
+
+      // enterGroup launches this future without awaiting it. The direct call proves the same
+      // future completes normally and leaves state the UI can inspect instead of merely hiding an
+      // unhandled zone error that would still fail widget tests and occasionally crash debug runs.
+      await state.armLadder();
+
+      expect(state.notificationsEnabled, isFalse);
+      expect(scheduled, isFalse);
+      expect(repo.tracked, isEmpty);
+    });
+
+    test('a scheduling failure revokes an earlier permission success', () async {
+      final repo = MockRepository();
+      addTearDown(repo.dispose);
+      final state = AppState(
+        repo,
+        requestNotificationPermission: () async => true,
+        scheduleNotificationLadder: (group, {demo = false}) async {
+          throw StateError('OS scheduler unavailable');
+        },
+      )..group = _group();
+
+      // Permission alone is not enough to promise reminders. If queueing fails after permission
+      // succeeds, false is the honest state and the success funnel event must not be emitted.
+      await state.armLadder();
+
+      expect(state.notificationsEnabled, isFalse);
+      expect(repo.tracked, isEmpty);
     });
   });
 }

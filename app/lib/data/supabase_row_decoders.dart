@@ -93,6 +93,20 @@ MutualContact decodeMutualContactRow(
   photoUrl: signedPhotoUrl,
 );
 
+ReceivedReflection decodeReceivedReflectionRow(
+  Map<String, dynamic> row, {
+  String? signedPhotoUrl,
+}) {
+  final profile = _requiredMap(row, 'profiles');
+  return ReceivedReflection(
+    authorId: _requiredString(row, 'user_id'),
+    authorName: _requiredString(profile, 'display_name'),
+    authorAvatar: _string(profile['avatar']) ?? '🙂',
+    text: _requiredString(row, 'what_stuck'),
+    authorPhotoUrl: signedPhotoUrl,
+  );
+}
+
 Map<String, dynamic> nestedMap(Map<String, dynamic> row, String key) =>
     _requiredMap(row, key);
 

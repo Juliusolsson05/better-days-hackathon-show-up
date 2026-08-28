@@ -13,7 +13,12 @@
 // the caller is not a member of.
 
 import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
-import { openChat, type ChatMember } from '../_shared/chat.ts';
+import {
+  openChat,
+  OpenChatRequestError,
+  parseOpenChatRequest,
+  type ChatMember,
+} from '../_shared/chat.ts';
 
 Deno.serve(async (req) => {
   try {
@@ -24,7 +29,15 @@ Deno.serve(async (req) => {
       return new Response('forbidden', { status: 403 });
     }
 
-    const { group_id = null } = await req.json().catch(() => ({}));
+    let input: unknown;
+    try {
+      input = await req.json();
+    } catch {
+      // This endpoint's valid empty object means "all groups". Falling back to `{}` on a JSON
+      // error therefore turns a typo into a bulk service-role operation instead of a 400.
+      return Response.json({ error: 'body must be valid JSON' }, { status: 400 });
+    }
+    const { groupId } = parseOpenChatRequest(input);
 
     const db = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -32,8 +45,8 @@ Deno.serve(async (req) => {
     );
 
     // No group_id means "every group that needs one" -- the backfill case.
-    const { data: groups, error: gErr } = group_id
-      ? await db.from('groups').select('id').eq('id', group_id)
+    const { data: groups, error: gErr } = groupId
+      ? await db.from('groups').select('id').eq('id', groupId)
       : await db.from('groups').select('id');
     if (gErr) throw gErr;
     if (!groups?.length) return Response.json({ opened: 0, reason: 'no such group' });
@@ -66,6 +79,9 @@ Deno.serve(async (req) => {
 
     return Response.json({ opened: opened.length, skipped: skipped.length, groups: opened });
   } catch (err) {
+    if (err instanceof OpenChatRequestError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
     console.error(err);
     return Response.json({ error: String(err) }, { status: 500 });
   }

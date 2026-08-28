@@ -3,6 +3,7 @@
 // table scan per slice.
 
 import { ch } from '../_shared/clickhouse.ts';
+import { COHESION_QUERY } from '../_shared/analytics.ts';
 
 // A browser dashboard fails preflight without these.
 const CORS = {
@@ -20,9 +21,10 @@ Deno.serve(async (req) => {
             ) AS level
             FROM events WHERE ts > now() - INTERVAL 30 DAY GROUP BY user_id
           ) GROUP BY level ORDER BY level`),
-      ch(`SELECT round(JSONExtractFloat(props, 'seed_distance'), 1) AS bucket, count() AS n
-          FROM events WHERE name = 'group_formed'
-          GROUP BY bucket ORDER BY bucket`),
+      // group_formed is deliberately emitted once per member so it can participate in each
+      // person's funnel. The distance panel is group-level, though, so its query must deduplicate
+      // those 4-6 rows by group_id instead of presenting member-event volume as a group count.
+      ch(COHESION_QUERY),
       ch(`SELECT name, count() AS n FROM events
           WHERE ts > now() - INTERVAL 7 DAY GROUP BY name ORDER BY n DESC`),
     ]);

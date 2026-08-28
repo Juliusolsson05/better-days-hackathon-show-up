@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show DartPluginRegistrant;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -53,6 +55,161 @@ class NotificationTap {
   final String? action;
 }
 
+const _pendingBackgroundRsvpKey = 'showup.pending_notification_rsvp';
+
+/// The three preference operations the background-action handoff actually needs.
+///
+/// Keeping this boundary smaller than SharedPreferences itself makes the cross-isolate protocol
+/// testable without initializing a platform channel in a Dart VM test. Production uses the async,
+/// uncached preferences API below because a cached instance in the main isolate cannot observe a
+/// write made by flutter_local_notifications' background isolate.
+@visibleForTesting
+abstract interface class NotificationActionPreferences {
+  Future<String?> getString(String key);
+  Future<void> setString(String key, String value);
+  Future<void> remove(String key);
+}
+
+class _AsyncNotificationActionPreferences
+    implements NotificationActionPreferences {
+  _AsyncNotificationActionPreferences()
+    : _preferences = SharedPreferencesAsync();
+
+  final SharedPreferencesAsync _preferences;
+
+  @override
+  Future<String?> getString(String key) => _preferences.getString(key);
+
+  @override
+  Future<void> setString(String key, String value) =>
+      _preferences.setString(key, value);
+
+  @override
+  Future<void> remove(String key) => _preferences.remove(key);
+}
+
+/// Durable bridge between the notification callback isolate and the app's main isolate.
+///
+/// A single slot is intentional. RSVP is mutable intent: if somebody taps "I'm in" and then
+/// "Can't make it" before reopening the app, replaying both mutations creates needless traffic and
+/// an intermediate lie. Overwriting the slot preserves the latest choice. [claim] removes before
+/// returning so repeated lifecycle callbacks cannot apply that same physical action twice.
+@visibleForTesting
+class BackgroundNotificationActionStore {
+  BackgroundNotificationActionStore({
+    NotificationActionPreferences? preferences,
+  }) : _preferences = preferences ?? _AsyncNotificationActionPreferences();
+
+  final NotificationActionPreferences _preferences;
+
+  Future<void> save(NotificationTap tap) {
+    if (tap.action != 'rsvp_yes' && tap.action != 'rsvp_no') {
+      throw ArgumentError.value(
+        tap.action,
+        'tap.action',
+        'expected an RSVP action',
+      );
+    }
+    return _preferences.setString(
+      _pendingBackgroundRsvpKey,
+      jsonEncode({
+        'group_id': tap.groupId,
+        'rung': tap.rung.name,
+        'action': tap.action,
+      }),
+    );
+  }
+
+  Future<NotificationTap?> claim() async {
+    final raw = await _preferences.getString(_pendingBackgroundRsvpKey);
+    if (raw == null) return null;
+
+    // Remove even malformed data. A damaged value must not become a permanent poison message that
+    // retries on every foreground transition, and removing before publication gives the relay the
+    // same at-most-once ownership rule it already applies to cold-launch notification responses.
+    await _preferences.remove(_pendingBackgroundRsvpKey);
+    try {
+      final value = jsonDecode(raw);
+      if (value is! Map) return null;
+      final map = Map<String, dynamic>.from(value);
+      final groupId = map['group_id'];
+      final rungName = map['rung'];
+      final action = map['action'];
+      if (groupId is! String || rungName is! String || action is! String) {
+        return null;
+      }
+      if (action != 'rsvp_yes' && action != 'rsvp_no') return null;
+      final rung = _rungNamed(rungName);
+      if (rung == null) return null;
+      return NotificationTap(groupId, rung, action: action);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// Only action buttons belong in the durable background handoff.
+///
+/// Notification body taps already reach the main-isolate callback or launch-details API. Saving
+/// them here as well would make one physical tap navigate twice. Unknown actions are also ignored:
+/// this background isolate cannot safely invent semantics for a future button.
+@visibleForTesting
+NotificationTap? decodeBackgroundRsvpTap(String? payload, String? actionId) {
+  if (actionId != 'rsvp_yes' && actionId != 'rsvp_no') return null;
+  return _decode(payload, actionId);
+}
+
+/// Relays notification responses without losing the one response produced before runApp().
+///
+/// The notification plugin exposes a cold-launch response during [NotificationService.init],
+/// while the app cannot subscribe until after that method returns and runApp builds the shell.
+/// A plain broadcast controller drops events with no listeners, which made every cold-launch
+/// deep link disappear. Only that plugin-owned launch response is buffered here. Live callbacks
+/// deliberately retain broadcast semantics so foreground/background delivery cannot be replayed
+/// later as a second navigation or a second RSVP mutation.
+@visibleForTesting
+class NotificationTapRelay {
+  NotificationTapRelay() {
+    _controller = StreamController<NotificationTap>.broadcast(
+      onListen: _flushInitialTap,
+    );
+  }
+
+  late final StreamController<NotificationTap> _controller;
+  NotificationTap? _pendingInitialTap;
+
+  Stream<NotificationTap> get stream => _controller.stream;
+
+  /// Publishes an ordinary plugin callback exactly once to the listeners that exist now.
+  void publishLive(NotificationTap tap) => _controller.add(tap);
+
+  /// Holds the plugin's one cold-launch response until the app installs its first listener.
+  void publishInitial(NotificationTap tap) {
+    if (_controller.hasListener) {
+      _controller.add(tap);
+      return;
+    }
+
+    // The platform API promises one launch response. Keeping the first if a buggy platform
+    // implementation reports twice is safer than replacing the routing fact just before the app
+    // subscribes, and still guarantees that one physical tap causes at most one app transition.
+    _pendingInitialTap ??= tap;
+  }
+
+  void _flushInitialTap() {
+    final tap = _pendingInitialTap;
+    if (tap == null) return;
+
+    // Clear before adding. A synchronous cancellation/re-listen from downstream must not observe
+    // the same action twice; RSVP writes are idempotent today, but navigation side effects are not.
+    _pendingInitialTap = null;
+    _controller.add(tap);
+  }
+
+  @visibleForTesting
+  Future<void> close() => _controller.close();
+}
+
 /// iOS category that carries the two RSVP buttons. Registered at init; referenced by
 /// `categoryIdentifier` on the reveal rung only.
 ///
@@ -61,18 +218,25 @@ class NotificationTap {
 /// is the shortest possible path.
 const _rsvpCategoryId = 'showup.rsvp';
 
-class NotificationService {
+class NotificationService with WidgetsBindingObserver {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
 
   final _plugin = FlutterLocalNotificationsPlugin();
-  final _taps = StreamController<NotificationTap>.broadcast();
+  final _tapRelay = NotificationTapRelay();
+  // Construct preferences only when init actually replays actions. AppState references this
+  // singleton in hermetic widget tests where main() intentionally never registers plugins; eager
+  // construction would make an unrelated chat screen fail before its injected notification seams
+  // can take effect. Runtime init and the background handler both run after plugin registration.
+  late final _backgroundActions = BackgroundNotificationActionStore();
 
-  /// Listened to by the app shell to route taps. Broadcast because a cold-start tap and a
-  /// warm tap arrive through different plugin callbacks and both funnel in here.
-  Stream<NotificationTap> get taps => _taps.stream;
+  /// Listened to by the app shell to route taps. Live taps remain broadcast events; the relay
+  /// retains only the plugin's initial launch response because it necessarily predates runApp().
+  Stream<NotificationTap> get taps => _tapRelay.stream;
 
   bool _ready = false;
+  bool _observingLifecycle = false;
+  Future<void>? _backgroundReplay;
 
   Future<void> init() async {
     if (_ready) return;
@@ -109,15 +273,57 @@ class NotificationService {
     final launch = await _plugin.getNotificationAppLaunchDetails();
     if (launch?.didNotificationLaunchApp ?? false) {
       final r = launch!.notificationResponse;
-      if (r != null) _onResponse(r);
+      if (r != null) _onResponse(r, initialLaunch: true);
+    }
+
+    // A non-foreground RSVP action is delivered on another isolate and therefore cannot touch the
+    // relay above. Claim it after plugin initialization; publishInitial buffers it until ShowUpApp
+    // installs the listener immediately after runApp. The same method runs on resume for actions
+    // taken while an already-running app was asleep.
+    await _replayBackgroundRsvp();
+    if (!_observingLifecycle) {
+      WidgetsBinding.instance.addObserver(this);
+      _observingLifecycle = true;
     }
 
     _ready = true;
   }
 
-  void _onResponse(NotificationResponse r) {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_replayBackgroundRsvp());
+    }
+  }
+
+  Future<void> _replayBackgroundRsvp() {
+    // init and a resume callback can occur close together on a cold launch. Sharing one in-flight
+    // claim prevents two reads from observing the same stored action before either removes it.
+    return _backgroundReplay ??= _claimAndPublishBackgroundRsvp().whenComplete(
+      () => _backgroundReplay = null,
+    );
+  }
+
+  Future<void> _claimAndPublishBackgroundRsvp() async {
+    try {
+      final tap = await _backgroundActions.claim();
+      if (tap != null) _tapRelay.publishInitial(tap);
+    } catch (error) {
+      // Reminder delivery is an enhancement, while app startup and the live group are the product
+      // path. A temporarily unavailable preferences channel must not convert a recoverable missed
+      // lock-screen action into a failed launch or an unhandled lifecycle Future.
+      debugPrint('[ladder] could not replay background RSVP: $error');
+    }
+  }
+
+  void _onResponse(NotificationResponse r, {bool initialLaunch = false}) {
     final tap = _decode(r.payload, r.actionId);
-    if (tap != null) _taps.add(tap);
+    if (tap == null) return;
+    if (initialLaunch) {
+      _tapRelay.publishInitial(tap);
+    } else {
+      _tapRelay.publishLive(tap);
+    }
   }
 
   /// Ask for permission at the moment the value is obvious -- right after the group
@@ -285,8 +491,17 @@ class NotificationService {
 /// across calls (or cancelLadder misses and the user gets duplicates) and DISTINCT across
 /// rungs (or one rung overwrites another and simply never arrives). Masked to 31 bits
 /// because Android notification ids are signed 32-bit.
-int notificationIdFor(String groupId, Rung rung) =>
-    Object.hash(groupId, rung.index) & 0x7FFFFFFF;
+int notificationIdFor(String groupId, Rung rung) {
+  // Object.hash is randomized between Dart processes on some runtimes. That looks stable in a
+  // unit test but leaves old notifications impossible to cancel after an app restart. FNV-1a is
+  // deliberately boring and deterministic across both process and platform boundaries.
+  var hash = 0x811C9DC5;
+  for (final unit in '$groupId:${rung.index}'.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x01000193) & 0xFFFFFFFF;
+  }
+  return hash & 0x7FFFFFFF;
+}
 
 NotificationTap? _decode(String? payload, String? actionId) {
   if (payload == null) return null;
@@ -295,19 +510,21 @@ NotificationTap? _decode(String? payload, String? actionId) {
     final groupId = map['group_id'] as String?;
     final rungName = map['rung'] as String?;
     if (groupId == null || rungName == null) return null;
-    return NotificationTap(
-      groupId,
-      Rung.values.firstWhere(
-        (r) => r.name == rungName,
-        orElse: () => Rung.reveal,
-      ),
-      action: actionId,
-    );
+    final rung = _rungNamed(rungName);
+    if (rung == null) return null;
+    return NotificationTap(groupId, rung, action: actionId);
   } catch (_) {
     // A malformed payload must not take down a notification tap -- worst case the user
     // lands on the default screen instead of a deep link.
     return null;
   }
+}
+
+Rung? _rungNamed(String name) {
+  for (final rung in Rung.values) {
+    if (rung.name == name) return rung;
+  }
+  return null;
 }
 
 /// Runs in a separate isolate when an action button is hit while the app is backgrounded.
@@ -316,11 +533,25 @@ NotificationTap? _decode(String? payload, String? actionId) {
 /// RELEASE build, and release is the only mode that runs on a physical iPhone. The buttons
 /// would then do nothing in exactly the build being demoed.
 ///
-/// It cannot touch app state -- different isolate, no shared memory. The RSVP is applied
-/// when the app next opens and replays the tap.
+/// It cannot touch app state -- different isolate, no shared memory. It therefore writes the
+/// decoded RSVP intent through an uncached platform preference and lets NotificationService claim
+/// it on init/resume. Trying to call Supabase here would require reconstructing auth/session state
+/// inside an isolate the app does not own and would turn a lock-screen tap into a second login path.
 @pragma('vm:entry-point')
-void notificationBackgroundHandler(NotificationResponse response) {
-  debugPrint(
-    '[ladder] background action: ${response.actionId} ${response.payload}',
-  );
+Future<void> notificationBackgroundHandler(
+  NotificationResponse response,
+) async {
+  final tap = decodeBackgroundRsvpTap(response.payload, response.actionId);
+  if (tap == null) return;
+
+  try {
+    // The notification plugin registers its own callback entry point, but plugins used *from* that
+    // isolate still need the generated registrant before their platform channels are available.
+    DartPluginRegistrant.ensureInitialized();
+    await BackgroundNotificationActionStore().save(tap);
+  } catch (error) {
+    // There is no UI on this isolate. Logging is the only honest fallback; throwing would make the
+    // OS consider the callback failed without giving the person any recovery path at all.
+    debugPrint('[ladder] could not persist background RSVP: $error');
+  }
 }

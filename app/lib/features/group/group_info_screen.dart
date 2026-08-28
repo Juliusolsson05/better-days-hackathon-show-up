@@ -100,6 +100,31 @@ class GroupInfoScreen extends StatelessWidget {
               ],
             ),
           ),
+          if (group.eventAt
+              .add(const Duration(hours: 2))
+              .isBefore(DateTime.now())) ...[
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: () => _showReceivedReflections(context, state),
+              icon: const Icon(Icons.auto_awesome_outlined),
+              label: const Text('What people remembered'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () async {
+                // Contacts can become mutual after this user finished the after-flow. Keeping
+                // the only read behind that one-time flow made the durable RPC effectively
+                // write-once/read-once: a later reciprocal choice was stored correctly but had
+                // no production route back into the app. Pop the nested info route first so the
+                // root phase transition can reveal ContactsScreen instead of changing invisibly
+                // underneath this Navigator page.
+                Navigator.pop(context);
+                await state.loadContacts();
+              },
+              icon: const Icon(Icons.contact_phone_outlined),
+              label: const Text('View mutual contacts'),
+            ),
+          ],
           const SizedBox(height: 32),
         ],
       ),
@@ -130,6 +155,91 @@ class GroupInfoScreen extends StatelessWidget {
           ],
         ),
       ],
+    ),
+  );
+}
+
+Future<void> _showReceivedReflections(
+  BuildContext context,
+  AppState state,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final notes = await state.repo.receivedReflections(state.group!.id);
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ReflectionSheet(notes),
+    );
+  } catch (_) {
+    // A missing reciprocal note is an ordinary empty result, while a failed read is recoverable.
+    // Keep those distinct so an outage does not tell someone that nobody remembered them.
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not load reflections. Try again.')),
+    );
+  }
+}
+
+class _ReflectionSheet extends StatelessWidget {
+  const _ReflectionSheet(this.notes);
+
+  final List<ReceivedReflection> notes;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'What people remembered',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            notes.isEmpty
+                ? 'Nothing has come back yet. Reflections appear only after both sides write.'
+                : 'Only notes written about you appear here.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            for (final note in notes)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(cardRadius),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Avatar(note.authorAvatar, imageUrl: note.authorPhotoUrl),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            note.authorName,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(note.text),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
     ),
   );
 }

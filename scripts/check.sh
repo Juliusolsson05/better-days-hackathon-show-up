@@ -55,6 +55,16 @@ done
 rg -q '<uses-permission android:name="android.permission.INTERNET"' \
   app/android/app/src/main/AndroidManifest.xml
 
+echo "→ ClickPipes infrastructure contract"
+command -v terraform >/dev/null || { echo "terraform is required"; exit 1; }
+terraform -chdir=infra/clickhouse-cdc fmt -check
+# Validation needs the provider schema but must never initialize or inspect a deployment state.
+# -backend=false preserves that boundary while still detecting renamed ClickPipes attributes.
+terraform -chdir=infra/clickhouse-cdc init -backend=false -input=false >/dev/null
+terraform -chdir=infra/clickhouse-cdc validate
+terraform -chdir=infra/clickhouse-cdc test
+./scripts/check_clickhouse_cdc.sh
+
 echo "→ Postgres product contracts"
 ./scripts/check_schema.sh
 

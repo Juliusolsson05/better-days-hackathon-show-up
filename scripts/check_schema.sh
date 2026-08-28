@@ -21,6 +21,8 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when exists (select 1 from pg_publication
+                  where pubname='show_up_clickhouse') then '0005'
      when exists (select 1 from information_schema.columns
                   where table_schema='public' and table_name='messages'
                     and column_name='client_msg_id') then '0004'
@@ -44,8 +46,10 @@ if [[ "$SCHEMA_STATE" == "0001" ]]; then
     -f supabase/migrations/0002_after_meetup.sql \
     -f supabase/migrations/0003_product_contracts.sql \
     -f supabase/migrations/0004_chat.sql \
+    -f supabase/migrations/0005_clickhouse_cdc.sql \
     -f supabase/tests/0002_product_contracts.sql \
     -f supabase/tests/0004_chat.sql \
+    -f supabase/tests/0005_clickhouse_cdc.sql \
     -c 'rollback'
 elif [[ "$SCHEMA_STATE" == "0002" ]]; then
   # This is the production upgrade path: 0002's after-meetup tables exist, but the wider
@@ -54,8 +58,10 @@ elif [[ "$SCHEMA_STATE" == "0002" ]]; then
     -c 'begin' \
     -f supabase/migrations/0003_product_contracts.sql \
     -f supabase/migrations/0004_chat.sql \
+    -f supabase/migrations/0005_clickhouse_cdc.sql \
     -f supabase/tests/0002_product_contracts.sql \
     -f supabase/tests/0004_chat.sql \
+    -f supabase/tests/0005_clickhouse_cdc.sql \
     -c 'rollback'
 elif [[ "$SCHEMA_STATE" == "0003" ]]; then
   # Product contracts are present but optimistic chat delivery is not. This is the merge order
@@ -63,18 +69,31 @@ elif [[ "$SCHEMA_STATE" == "0003" ]]; then
   psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
     -c 'begin' \
     -f supabase/migrations/0004_chat.sql \
+    -f supabase/migrations/0005_clickhouse_cdc.sql \
     -f supabase/tests/0002_product_contracts.sql \
     -f supabase/tests/0004_chat.sql \
+    -f supabase/tests/0005_clickhouse_cdc.sql \
     -c 'rollback'
 elif [[ "$SCHEMA_STATE" == "0004" ]]; then
+  # Chat is installed but the analytical publication is not. This is the production state that
+  # existed immediately before CDC, so prove 0005 does not depend on a fresh database.
+  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
+    -c 'begin' \
+    -f supabase/migrations/0005_clickhouse_cdc.sql \
+    -f supabase/tests/0002_product_contracts.sql \
+    -f supabase/tests/0004_chat.sql \
+    -f supabase/tests/0005_clickhouse_cdc.sql \
+    -c 'rollback'
+elif [[ "$SCHEMA_STATE" == "0005" ]]; then
   # After local db reset has applied every migration, reapplying forward-only DDL would be a
   # false failure. The behavioral assertions still run against the installed contract.
   psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
     -c 'begin' \
     -f supabase/tests/0002_product_contracts.sql \
     -f supabase/tests/0004_chat.sql \
+    -f supabase/tests/0005_clickhouse_cdc.sql \
     -c 'rollback'
 else
-  echo "local database is not a recognized 0001 through 0004 Show Up schema"
+  echo "local database is not a recognized 0001 through 0005 Show Up schema"
   exit 1
 fi

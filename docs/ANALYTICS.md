@@ -78,6 +78,19 @@ would fail CORS preflight.
 | Events · last 7 days | `volume`: `[{name, n}]` | Raw event counts. |
 | Footer | `scanned` = `funnel.stats` (ClickHouse `statistics` block) | `rows_read` and `elapsed`. `docs/DESIGN.md` §4.7: the database reporting its own scan cost rather than us claiming a number. |
 
+## Operational lifecycle data
+
+The dashboard panels above remain event-based, but durable product state is also available in
+ClickHouse after the Postgres CDC deployment. Query `analytics_group_lifecycle` rather than raw
+`cdc_*` tables. The semantic view applies `FINAL`, removes ClickPipes delete tombstones, and joins
+membership, RSVP, chat participation, venue voting, reflection, attendance, and mutual-contact
+outcomes per group.
+
+Raw ClickPipes tables are version streams. A plain `count()` against `cdc_rsvps` or
+`cdc_venue_votes` can temporarily count several versions of one Postgres row and can resurrect a
+deleted row. The `analytics_*_current` views in `clickhouse/004_cdc_views.sql` are the required
+current-state boundary; use raw tables only when deliberately investigating replication history.
+
 ## Follow-ups
 
 - Per-bucket funnel (the real "tighter match → more numbers exchanged" claim) — needs a

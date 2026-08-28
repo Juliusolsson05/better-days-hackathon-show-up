@@ -1,4 +1,4 @@
--- Executed after 0002 inside a transaction by scripts/check_schema.sh.
+-- Executed after the applicable forward migrations inside a transaction by check_schema.sh.
 -- Raise immediately when a product promise has become merely a client convention.
 
 do $$

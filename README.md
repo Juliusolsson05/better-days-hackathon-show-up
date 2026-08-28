@@ -85,18 +85,21 @@ must be correct right now; ClickHouse holds everything that gets scanned in bulk
 
 ```
                     anon key + RLS
-   Flutter ─────────────────────────────► Supabase Postgres
+   Flutter ─────────────────────────────► Supabase managed Postgres
       │                                       (OLTP: truth)
-      │  user JWT                                  ▲
-      └──────────► Edge Function ──────────────────┘
-                        │  service role write-back
-                        ├──────► ClickHouse Cloud   (OLAP: scan + event stream)
-                        └──────► Voyage / Claude    (embed, extract, generate)
+      │  user JWT                                  │ committed WAL
+      └──────────► Edge Function ─────────────┐     ▼
+                        │  service writes     │  ClickPipes CDC
+                        │                     │     │ selected product state
+                        ├──────► ClickHouse Cloud ◄─┘ (OLAP: analysis)
+                        └──────► Voyage / Claude      (embed, extract, generate)
 ```
 
 Flutter talks to Postgres directly — the anon key is public by design and RLS enforces
 access per row. It never talks to ClickHouse: that interface accepts arbitrary SQL and has
 no per-row permissions, so a credential inside the app binary would expose every profile.
+Supabase remains the managed Postgres provider; ClickPipes reads its logical replication
+stream. The product does not use or require a Postgres instance managed by ClickHouse.
 
 | Path | What lives there |
 |---|---|
@@ -104,6 +107,7 @@ no per-row permissions, so a credential inside the app binary would expose every
 | `supabase/migrations/` | Postgres schema and every RLS policy. |
 | `supabase/functions/` | The only server code. `_shared/` is skipped by deploy — the underscore matters. |
 | `clickhouse/` | Schema, the million-row seed, and the demo queries. |
+| `infra/clickhouse-cdc/` | Managed ClickPipe and shared CDC compute, declared with Terraform. |
 | `scripts/` | Archetype embedding, demo reset. |
 | `docs/` | Design, infrastructure, push notifications, venue matching. |
 
@@ -119,6 +123,10 @@ supabase functions deploy
 clickhouse client --host <host> --secure --password <pw> < clickhouse/001_schema.sql
 python scripts/seed_archetypes.py
 clickhouse client --host <host> --secure --password <pw> < clickhouse/002_seed.sql
+
+# After `supabase db push` has installed migration 0005 and the CDC env values are exported:
+./scripts/deploy_clickhouse_cdc.sh plan
+./scripts/deploy_clickhouse_cdc.sh apply
 
 cd app && flutter run \
   --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...

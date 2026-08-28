@@ -14,6 +14,15 @@ supabase/.temp
 
 .env.functions
 
+# ClickPipes is declarative, but its state and operator tfvars contain live infrastructure
+# identifiers and may contain secrets from older Terraform/provider versions. The lock file is
+# intentionally committed; it is the reviewed provider supply-chain pin.
+infra/clickhouse-cdc/.terraform/
+infra/clickhouse-cdc/*.tfstate
+infra/clickhouse-cdc/*.tfstate.*
+infra/clickhouse-cdc/*.tfvars
+infra/clickhouse-cdc/crash.log
+
 # Agent worktrees are checkouts of this repo, not content of it
 .claude/
 

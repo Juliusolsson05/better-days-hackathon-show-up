@@ -15,6 +15,11 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Show Up'), findsOneWidget);
+    // The approved reference has no Material app bar; its first display line is the stable boot
+    // landmark. Protecting that copy also prevents the legacy single-page form from returning.
+    expect(
+      find.text('A table of four to six people who all came alone.'),
+      findsOneWidget,
+    );
   });
 }

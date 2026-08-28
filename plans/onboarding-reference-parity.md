@@ -15,11 +15,13 @@ rewrite look absent even though the later reference shell is present.
 2. Render the equivalent Flutter states at iPhone dimensions and identify the concrete deltas.
 3. Rebuild the Flutter onboarding presentation against the existing `AppState` submission contract,
    keeping backend behavior unchanged while matching the approved reference.
-4. Add focused widget coverage for the navigation and interaction contracts that caused the visible
+4. Restore the reference venue's MapKit surface by resolving its address-only fixtures through the
+   native geocoder, while retaining the honest address fallback for offline/rate-limited lookups.
+5. Add focused widget coverage for the navigation and interaction contracts that caused the visible
    regression.
-5. Run formatting, analysis, tests, and side-by-side visual verification; then build and install the
+6. Run formatting, analysis, tests, and side-by-side visual verification; then build and install the
    corrected release on the connected iPhone.
-6. Update Issue #25 and open a reviewable PR with the evidence, verification, and remaining limits.
+7. Update Issue #25 and open a reviewable PR with the evidence, verification, and remaining limits.
 
 ## Acceptance criteria
 
@@ -28,4 +30,15 @@ rewrite look absent even though the later reference shell is present.
   existing profile-submission boundary.
 - The implementation remains usable with keyboard and safe-area insets on the physical iPhone.
 - Automated tests protect the step sequence and submission behavior.
+- Address-only reference venues resolve into a native MapKit view and Directions action.
 - The final release build is visually checked and installed on the connected device.
+
+## Implementation decision
+
+The pinned mock omits display name, phone, passion prose, and availability even though the live
+profile contract requires all four. The exact three-step port therefore replaces onboarding only
+when `referenceUiPreview` is enabled, which app bootstrap already restricts to `MockRepository`.
+The live Supabase path retains its complete form until those private fields receive an approved
+design. Reference completion still calls `Repository.submitProfile` with mock-only placeholders so
+the remainder of `AppState` observes the same completion boundary instead of gaining a second,
+presentation-only state transition.

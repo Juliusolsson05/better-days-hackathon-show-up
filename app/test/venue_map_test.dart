@@ -1,3 +1,4 @@
+import 'package:apple_maps_flutter/apple_maps_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:showup/features/group/venue_map.dart';
@@ -20,11 +21,46 @@ void main() {
     );
 
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: VenueMap(venue))),
+      MaterialApp(
+        home: Scaffold(
+          body: VenueMap(
+            venue,
+            geocode: (_) async => throw StateError('offline'),
+          ),
+        ),
+      ),
     );
+    await tester.pump();
 
     expect(venue.hasLocation, isFalse);
     expect(find.text('2801 Mission St'), findsOneWidget);
+  });
+
+  testWidgets('an address-only venue resolves into a real MapKit surface', (
+    tester,
+  ) async {
+    const venue = VenueOption(
+      id: 'reference-cafe',
+      name: 'Reference Cafe',
+      address: '123 Mission St, San Francisco',
+      pitch: 'quiet enough to talk',
+      categories: ['cafe'],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VenueMap(
+            venue,
+            geocode: (_) async => const LatLng(37.79, -122.39),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(AppleMap), findsOneWidget);
+    expect(find.text('Directions'), findsOneWidget);
   });
 
   test('hasLocation requires both coordinates, not either', () {

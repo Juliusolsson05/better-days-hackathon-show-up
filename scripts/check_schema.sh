@@ -22,6 +22,9 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
      when exists (select 1 from information_schema.columns
+                  where table_schema='public' and table_name='messages'
+                    and column_name='client_msg_id') then '0004'
+     when exists (select 1 from information_schema.columns
                   where table_schema='public' and table_name='groups'
                     and column_name='seed_distance') then '0003'
      when exists (select 1 from information_schema.tables
@@ -40,7 +43,9 @@ if [[ "$SCHEMA_STATE" == "0001" ]]; then
     -f supabase/tests/0001_documented_upgrade_fixture.sql \
     -f supabase/migrations/0002_after_meetup.sql \
     -f supabase/migrations/0003_product_contracts.sql \
+    -f supabase/migrations/0004_chat.sql \
     -f supabase/tests/0002_product_contracts.sql \
+    -f supabase/tests/0004_chat.sql \
     -c 'rollback'
 elif [[ "$SCHEMA_STATE" == "0002" ]]; then
   # This is the production upgrade path: 0002's after-meetup tables exist, but the wider
@@ -48,16 +53,28 @@ elif [[ "$SCHEMA_STATE" == "0002" ]]; then
   psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
     -c 'begin' \
     -f supabase/migrations/0003_product_contracts.sql \
+    -f supabase/migrations/0004_chat.sql \
     -f supabase/tests/0002_product_contracts.sql \
+    -f supabase/tests/0004_chat.sql \
     -c 'rollback'
 elif [[ "$SCHEMA_STATE" == "0003" ]]; then
+  # Product contracts are present but optimistic chat delivery is not. This is the merge order
+  # used when chat hardening follows the wider reconciliation on a deployed database.
+  psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
+    -c 'begin' \
+    -f supabase/migrations/0004_chat.sql \
+    -f supabase/tests/0002_product_contracts.sql \
+    -f supabase/tests/0004_chat.sql \
+    -c 'rollback'
+elif [[ "$SCHEMA_STATE" == "0004" ]]; then
   # After local db reset has applied every migration, reapplying forward-only DDL would be a
   # false failure. The behavioral assertions still run against the installed contract.
   psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \
     -c 'begin' \
     -f supabase/tests/0002_product_contracts.sql \
+    -f supabase/tests/0004_chat.sql \
     -c 'rollback'
 else
-  echo "local database is not a recognized 0001, 0002, or 0003 Show Up schema"
+  echo "local database is not a recognized 0001 through 0004 Show Up schema"
   exit 1
 fi

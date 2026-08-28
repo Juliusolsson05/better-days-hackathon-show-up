@@ -6,6 +6,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.47.10';
 import { ch, arr, emit } from '../_shared/clickhouse.ts';
 import { planGroup } from '../_shared/claude.ts';
+import { openChat } from '../_shared/chat.ts';
+import { nextSlot } from '../_shared/schedule.ts';
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
 // stranding five people because a sixth could not be found.
@@ -33,6 +35,11 @@ Deno.serve(async (req) => {
     }
 
     const { city = 'SF', slot = 'fri_eve' } = await req.json().catch(() => ({}));
+    const eventAt = nextSlot(slot);
+    // This key is stable for every retry targeting the same city, availability bucket, and
+    // actual meetup. It scopes the database's "one user, one group" invariant to a cycle rather
+    // than incorrectly preventing a person from ever joining a future Show Up event.
+    const runKey = `${city.toLowerCase()}:${slot}:${eventAt}`;
 
     // Service role: this runs as the system, not as any user, and writes groups for
     // people who are not the caller.
@@ -40,6 +47,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
+
+    const { data: alreadyMatched, error: matchedErr } = await db.from('group_members')
+      .select('user_id')
+      .eq('matching_run_key', runKey);
+    if (matchedErr) throw matchedErr;
+    const matchedIds = new Set((alreadyMatched ?? []).map((row) => row.user_id));
 
     const { data: pool, error: poolErr } = await db.from('profiles')
       .select('id, display_name, passion, tags')
@@ -51,7 +64,12 @@ Deno.serve(async (req) => {
       return Response.json({ groups: 0, reason: 'empty pool' }, { headers: CORS });
     }
 
-    const unassigned = new Map(pool.map((p) => [p.id, p]));
+    // A restarted sweep must not form a second arrangement from people committed before the
+    // crash. The RPC is the final race-proof authority; this filter keeps ordinary retries from
+    // wasting Claude calls only to discover the same-run membership constraint at write time.
+    const unassigned = new Map(
+      pool.filter((profile) => !matchedIds.has(profile.id)).map((profile) => [profile.id, profile]),
+    );
     const skipped: string[] = [];
     const formed: string[] = [];
     let lastStats = { elapsed: 0, rows_read: 0, bytes_read: 0 };
@@ -138,7 +156,12 @@ Deno.serve(async (req) => {
       // with an FK to profiles means a reformatted or invented id becomes a constraint
       // violation mid-sweep -- validate against the ids we actually sent.
       const byId = new Map(plan.questions.map((q) => [q.user_id, q]));
-      if (picked.some((id) => !byId.has(id)) || byId.size !== picked.length) {
+      const targets = new Set(plan.questions.map((question) => question.pair_with));
+      if (
+        picked.some((id) => !byId.has(id) || !picked.includes(byId.get(id)!.pair_with) ||
+          byId.get(id)!.pair_with === id) || byId.size !== picked.length ||
+        targets.size !== picked.length
+      ) {
         skipped.push(seed);
         continue;
       }
@@ -148,36 +171,45 @@ Deno.serve(async (req) => {
       const seedDistance = rows.filter((r) => picked.includes(r.user_id))
         .reduce((s, r) => s + r.d, 0) / (picked.length - 1);
 
-      const { data: group, error: gErr } = await db.from('groups').insert({
-        event_at: nextSlot(slot),
-        venue: plan.venue,
-        activity: plan.activity,
-        // Column is still named cohesion in the applied schema; the draft renames it
-        // to seed_distance, which is what it actually measures.
-        cohesion: seedDistance,
-      }).select('id').single();
-      if (gErr) throw gErr;
-
-      const { error: gmErr } = await db.from('group_members').insert(
-        picked.map((id) => ({
-          group_id: group!.id,
+      // Group, membership, private assignments, and RSVPs are one transaction. The former four
+      // HTTP writes could fail after exposing a half-built group with no safe way to retry.
+      const { data: groupId, error: gErr } = await db.rpc('form_group', {
+        p_event_at: eventAt,
+        p_legacy_venue: plan.venue,
+        p_activity: plan.activity,
+        p_seed_distance: seedDistance,
+        p_members: picked.map((id) => ({
           user_id: id,
-          pair_with: byId.get(id)!.pair_with,
+          target_id: byId.get(id)!.pair_with,
           question: byId.get(id)!.question,
         })),
-      );
-      if (gmErr) throw gmErr;
+        p_run_key: runKey,
+        p_event_timezone: 'America/Los_Angeles',
+      });
+      if (gErr) throw gErr;
+      if (typeof groupId !== 'string') throw new Error('form_group returned no group id');
 
-      const { error: rErr } = await db.from('rsvps').insert(
-        picked.map((id) => ({ group_id: group!.id, user_id: id, status: 'pending' })),
-      );
-      if (rErr) throw rErr;
+      // Group formation and the chat opening are the same event per the PRD, so this
+      // belongs inside the sweep rather than in a follow-up pass -- there is no moment
+      // where a group exists and its room does not.
+      //
+      // Failure here is caught rather than thrown: the group, its members and its RSVPs
+      // are already committed at this point, and losing the whole sweep over an opening
+      // message would strand everyone matched after this group. An unopened room is
+      // recoverable by calling open-chat; a half-finished sweep is not.
+      try {
+        await openChat(db, groupId, members.map((m) => ({
+          id: m.id, display_name: m.display_name, tags: m.tags ?? [],
+        })));
+      } catch (chatErr) {
+        console.error(`group ${groupId} formed but its chat did not open`, chatErr);
+      }
 
       for (const id of picked) unassigned.delete(id);
       await Promise.all(picked.map((id) =>
-        emit('group_formed', id, group!.id, { seed_distance: seedDistance, size: picked.length })
+        emit('group_formed', id, groupId, { seed_distance: seedDistance, size: picked.length })
       ));
-      formed.push(group!.id);
+      formed.push(groupId);
     }
 
     // Returned so the demo can put the real scan numbers on screen.
@@ -217,11 +249,3 @@ function opposingStances(tags: string[]): string[] {
  * Next occurrence of the slot's weekday at the slot's hour, in Pacific time. The edge
  * runtime's local time is UTC, so setHours() there would put a 7pm event at noon PDT.
  */
-const WEEKDAY: Record<string, number> = { fri: 5, sat: 6, sun: 0 };
-function nextSlot(slot: string): string {
-  const [day, part] = slot.split('_');
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + ((WEEKDAY[day] - d.getUTCDay() + 7) % 7 || 7));
-  d.setUTCHours((part === 'eve' ? 19 : 13) + 7, 0, 0, 0);   // PDT = UTC-7
-  return d.toISOString();
-}

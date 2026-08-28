@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/models.dart';
@@ -83,7 +86,6 @@ class SupabaseRepository implements Repository {
     }
 
     final storedPhotoPath = await _uploadPhoto(uid, photoPath);
-
     final res = await _client.functions.invoke(
       'submit-profile',
       body: {
@@ -218,35 +220,169 @@ class SupabaseRepository implements Repository {
     );
   }
 
+  /// Messages this device has sent but not yet seen echoed back, per group.
+  ///
+  /// The optimistic bubble lives here rather than in the widget so that it survives the
+  /// widget rebuilding, and so the merge with the server list happens in one place.
+  final _pending = <String, List<Message>>{};
+
+  /// Lets [sendMessage] re-emit the merged list without owning the stream.
+  final _repaint = <String, void Function()>{};
+
   @override
   Stream<List<Message>> watchMessages(String groupId) {
-    final uid = _userId;
-    return _client
-        .from('messages')
-        .stream(primaryKey: ['id'])
-        .eq('group_id', groupId)
-        .order('created_at', ascending: true)
-        .map(
-          (rows) => rows
-              .map(
-                (row) => decodeMessageRow(
-                  row,
-                  currentUserId: uid,
-                  membersByUserId: _membersByUserId,
-                ),
-              )
-              .toList(growable: false),
-        );
+    // Hand-rolled controller rather than `async*` + `yield*`, because this stream is the
+    // merge of two sources: the realtime rows, and the local sends that have not come
+    // back yet. A plain yield* can only forward one of them.
+    late final StreamController<List<Message>> out;
+    StreamSubscription<List<Map<String, dynamic>>>? sub;
+    var server = const <Message>[];
+
+    void push() {
+      if (out.isClosed) return;
+      // A pending message whose row has arrived is now represented twice. The server copy
+      // is the real one -- it has the authoritative id and timestamp -- so the local one
+      // is dropped. This is the whole reason client_msg_id exists: `id` is a bigserial
+      // the client cannot predict, so there is no other way to recognise your own echo.
+      final echoed = server
+          .map((m) => m.clientMsgId)
+          .whereType<String>()
+          .toSet();
+      _pending[groupId]?.removeWhere((m) => echoed.contains(m.clientMsgId));
+      out.add([...server, ...?_pending[groupId]]);
+    }
+
+    out = StreamController<List<Message>>(
+      // Subscribing in onListen rather than eagerly means the realtime channel is opened
+      // when someone actually watches and closed again on cancel -- the chat screen is
+      // rebuilt constantly, and an eager subscription would outlive the listener.
+      onListen: () {
+        try {
+          final uid = _userId;
+          if (_membersByUserId.isEmpty) {
+            // AppState loads currentGroup before constructing the chat. Making that ordering
+            // explicit avoids reopening the roster through a second, weaker decoder that would
+            // bypass private signed-photo handling and drift from the group screen's identities.
+            throw StateError(
+              'currentGroup must be loaded before watching messages',
+            );
+          }
+          _repaint[groupId] = push;
+          // messages is in the supabase_realtime publication (0001), so this pushes on
+          // every insert. RLS 'read group messages' scopes it to the caller's groups, so
+          // no filtering beyond the group_id is needed -- or possible to get wrong.
+          sub = _client
+              .from('messages')
+              .stream(primaryKey: ['id'])
+              .eq('group_id', groupId)
+              .order('id', ascending: true)
+              .listen((rows) {
+                server = [
+                  for (final row in rows)
+                    decodeMessageRow(
+                      row,
+                      currentUserId: uid,
+                      membersByUserId: _membersByUserId,
+                    ),
+                ];
+                push();
+              }, onError: out.addError);
+        } catch (err, st) {
+          out.addError(err, st);
+        }
+      },
+      onCancel: () async {
+        _repaint.remove(groupId);
+        await sub?.cancel();
+      },
+    );
+    return out.stream;
   }
 
   @override
   Future<void> sendMessage(String groupId, String body) async {
-    await _client.from('messages').insert({
-      'group_id': groupId,
-      'user_id': _userId,
-      'body': body,
-      'kind': 'user',
-    });
+    // Optimistic, because the round trip is visible and the demo runs on venue wifi.
+    // Without this the message disappears between tapping send and the echo arriving,
+    // which reads as the app having eaten it.
+    final clientMsgId = _uuidV4();
+    final me = _membersByUserId[_userId];
+    final optimistic = Message(
+      id: 'pending-$clientMsgId',
+      authorId: 'me',
+      authorName: me?.displayName ?? 'You',
+      avatar: me?.avatar ?? '',
+      body: body,
+      sentAt: DateTime.now(),
+      authorPhotoUrl: me?.photoUrl,
+      clientMsgId: clientMsgId,
+      status: MessageStatus.sending,
+    );
+
+    final queue = _pending.putIfAbsent(groupId, () => <Message>[]);
+    queue.add(optimistic);
+    _repaint[groupId]?.call();
+
+    void mark(MessageStatus status) {
+      final i = queue.indexWhere((m) => m.clientMsgId == clientMsgId);
+      if (i >= 0) queue[i] = queue[i].copyWith(status: status);
+      _repaint[groupId]?.call();
+    }
+
+    try {
+      // RLS 'post as self' pins user_id to the caller; passing it explicitly is what the
+      // policy checks against rather than something it could be tricked by.
+      await _insertUserMessage(groupId, body, clientMsgId);
+      // Deliberately NOT removed here. The row is committed, but until the echo arrives
+      // this bubble is the only thing on screen representing it -- push() drops it the
+      // moment the real row lands. Marking it sent just retires the spinner.
+      mark(MessageStatus.sent);
+    } catch (_) {
+      // Left in the queue on purpose: a failed message the user can see and retry beats
+      // one that vanishes. client_msg_id makes the retry safe -- the unique constraint
+      // means a send that actually landed cannot be double-posted by trying again.
+      mark(MessageStatus.failed);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> retryMessage(String groupId, Message failed) async {
+    final queue = _pending[groupId];
+    if (queue == null || failed.clientMsgId == null) return;
+    final i = queue.indexWhere((m) => m.clientMsgId == failed.clientMsgId);
+    if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.sending);
+    _repaint[groupId]?.call();
+    try {
+      await _insertUserMessage(groupId, failed.body, failed.clientMsgId!);
+      if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.sent);
+    } catch (_) {
+      if (i >= 0) queue[i] = queue[i].copyWith(status: MessageStatus.failed);
+    }
+    _repaint[groupId]?.call();
+  }
+
+  Future<void> _insertUserMessage(
+    String groupId,
+    String body,
+    String clientMsgId,
+  ) async {
+    // Both the first attempt and every retry use the same conflict-safe write. A transport
+    // timeout cannot reveal whether Postgres committed, so a plain INSERT on retry turns the
+    // unique key into a user-visible error. DO NOTHING makes the stable client id the protocol:
+    // either this call writes the row or an indistinguishable earlier attempt already did.
+    await _client
+        .from('messages')
+        .upsert(
+          {
+            'group_id': groupId,
+            'user_id': _userId,
+            'body': body,
+            'kind': 'user',
+            'client_msg_id': clientMsgId,
+          },
+          onConflict: 'client_msg_id',
+          ignoreDuplicates: true,
+        );
   }
 
   @override
@@ -305,6 +441,36 @@ class SupabaseRepository implements Repository {
       targetName: targetName,
       question: row['question'] as String,
     );
+  }
+
+  @override
+  Future<void> track(
+    String event, {
+    String? groupId,
+    Map<String, dynamic> props = const {},
+  }) async {
+    try {
+      final response = await _client.functions.invoke(
+        'track',
+        body: {'name': event, 'group_id': ?groupId, 'props': props},
+      );
+      // invoke() returns non-2xx responses as data rather than necessarily throwing. If
+      // we ignore the status, a rejected event looks identical to a written one in debug
+      // and the closing-slide funnel silently stays empty.
+      if (response.status < 200 || response.status >= 300) {
+        throw Exception(
+          'track rejected with ${response.status}: ${response.data}',
+        );
+      }
+    } catch (err) {
+      // Swallowed by contract. An analytics write must never be able to fail the user
+      // action that triggered it -- a dropped funnel row costs us a number on a slide, a
+      // thrown exception costs the user their action.
+      //
+      // Deliberately not retried or queued: the events table is a funnel, not a ledger,
+      // and a queue that survives restarts is more machinery than the question needs.
+      if (kDebugMode) debugPrint('track($event) dropped: $err');
+    }
   }
 
   @override
@@ -394,4 +560,21 @@ class SupabaseRepository implements Repository {
       return null;
     }
   }
+}
+
+/// RFC 4122 version 4, from the platform CSPRNG.
+///
+/// Hand-rolled rather than adding the `uuid` package: this is the only place the app
+/// needs one, and Random.secure() is the same entropy source that package would use.
+/// Version and variant bits are set explicitly because Postgres validates the shape on
+/// the uuid column and a raw 16 random bytes is rejected.
+final _rand = Random.secure();
+
+String _uuidV4() {
+  final b = List<int>.generate(16, (_) => _rand.nextInt(256));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 1
+  String h(int i) => b[i].toRadixString(16).padLeft(2, '0');
+  return '${h(0)}${h(1)}${h(2)}${h(3)}-${h(4)}${h(5)}-${h(6)}${h(7)}-${h(8)}${h(9)}-'
+      '${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}';
 }

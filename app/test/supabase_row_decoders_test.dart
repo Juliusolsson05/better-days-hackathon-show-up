@@ -37,6 +37,7 @@ void main() {
           'user_id': 'user-b',
           'body': 'hello',
           'kind': 'user',
+          'client_msg_id': '10000000-0000-4000-8000-000000000001',
           'created_at': '2026-08-28T19:00:00Z',
         },
         currentUserId: 'user-a',
@@ -45,6 +46,7 @@ void main() {
 
       expect(message.authorName, 'Tom');
       expect(message.authorPhotoUrl, 'https://signed.test/tom.jpg');
+      expect(message.clientMsgId, '10000000-0000-4000-8000-000000000001');
       expect(message.kind, MessageKind.user);
     },
   );

@@ -89,6 +89,12 @@ class Group {
 
 enum MessageKind { user, venueVote, system }
 
+/// Where a message is in its journey to the server.
+///
+/// Only ever [sending] or [failed] for messages this device wrote and has not yet seen
+/// echoed back. Everything that arrives from the server is [sent] by definition.
+enum MessageStatus { sent, sending, failed }
+
 class Message {
   final String id;
   final String authorId;
@@ -98,6 +104,16 @@ class Message {
   final DateTime sentAt;
   final MessageKind kind;
   final String? authorPhotoUrl;
+
+  /// The uuid this device generated before sending, echoed back on the server row.
+  ///
+  /// It is what ties an optimistic bubble to the row that eventually arrives through the
+  /// realtime subscription -- `id` is a bigserial the client cannot know in advance, so
+  /// without this the message renders twice for a beat. Null on anything written
+  /// server-side (system framing, the vote anchor), which has no client to generate one.
+  final String? clientMsgId;
+
+  final MessageStatus status;
   const Message({
     required this.id,
     required this.authorId,
@@ -107,7 +123,25 @@ class Message {
     required this.sentAt,
     this.kind = MessageKind.user,
     this.authorPhotoUrl,
+    this.clientMsgId,
+    this.status = MessageStatus.sent,
   });
+
+  Message copyWith({MessageStatus? status}) => Message(
+    id: id,
+    authorId: authorId,
+    authorName: authorName,
+    avatar: avatar,
+    body: body,
+    sentAt: sentAt,
+    kind: kind,
+    authorPhotoUrl: authorPhotoUrl,
+    clientMsgId: clientMsgId,
+    status: status ?? this.status,
+  );
+
+  /// 'me' is the sentinel both repositories map the current user onto, so the chat screen
+  /// does not need to know whether it is talking to the mock or to Supabase.
   bool get isMine => authorId == 'me';
 }
 

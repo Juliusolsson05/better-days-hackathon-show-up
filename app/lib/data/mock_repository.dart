@@ -81,6 +81,7 @@ class MockRepository implements Repository {
   Profile? _me;
   Group? _group;
   String? _myVote;
+
   final _tally = <String, int>{'v1': 2, 'v2': 1, 'v3': 0};
   final _messages = <Message>[];
   final _controller = StreamController<List<Message>>.broadcast();
@@ -204,6 +205,26 @@ class MockRepository implements Repository {
     );
     _emit();
   }
+
+  /// What the demo would have sent to ClickHouse.
+  ///
+  /// Kept rather than discarded so the funnel can be reasoned about offline, and so a
+  /// test can assert that a flow emits what the dashboard needs without standing up a
+  /// backend. The real repository posts these to the `track` edge function.
+  final tracked = <({String event, String? groupId})>[];
+
+  @override
+  Future<void> track(
+    String event, {
+    String? groupId,
+    Map<String, dynamic> props = const {},
+  }) async {
+    tracked.add((event: event, groupId: groupId));
+  }
+
+  /// The mock never fails a send, so there is nothing to retry.
+  @override
+  Future<void> retryMessage(String groupId, Message failed) async {}
 
   void _emit() => _controller.add(List.unmodifiable(_messages));
 

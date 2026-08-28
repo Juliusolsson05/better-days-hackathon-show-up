@@ -76,6 +76,9 @@ Message decodeMessageRow(
     body: _string(row['body']) ?? '',
     sentAt: DateTime.parse(_requiredString(row, 'created_at')),
     kind: kind,
+    // Server rows are authoritative and therefore sent. The echoed client id lets the
+    // repository replace—not append to—the matching optimistic bubble.
+    clientMsgId: _string(row['client_msg_id']),
   );
 }
 

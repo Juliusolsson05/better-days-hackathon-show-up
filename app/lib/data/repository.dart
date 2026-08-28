@@ -46,12 +46,35 @@ abstract class Repository {
   Stream<List<Message>> watchMessages(String groupId);
   Future<void> sendMessage(String groupId, String body);
 
+  /// Re-sends a message whose first attempt failed, reusing its original client id.
+  ///
+  /// Reuse is what makes this safe: if the first attempt actually reached Postgres and
+  /// only the response was lost, the unique constraint on client_msg_id turns the retry into a
+  /// no-op rather than a duplicate. A plain re-send could not tell those cases apart.
+  Future<void> retryMessage(String groupId, Message failed);
+
   /// Voting is anonymous: you can read your own ballot and the tally, never who voted.
   Future<void> castVenueVote(String groupId, String optionId);
   Future<String?> myVenueVote(String groupId);
   Future<Map<String, int>> venueTally(String groupId);
 
   Future<Assignment> assignment(String groupId);
+
+  /// Appends one product-funnel event.
+  ///
+  /// This is the ONLY path from the client to ClickHouse, and it is deliberately
+  /// indirect -- ClickHouse takes arbitrary SQL and has no per-row permissions, so a
+  /// credential in the app binary would expose the whole population. The `track` edge
+  /// function holds the credential and accepts only a whitelisted event name about the
+  /// calling user.
+  ///
+  /// Fire-and-forget by contract: analytics must never be able to fail a user action,
+  /// so implementations swallow their errors rather than propagating them.
+  Future<void> track(
+    String event, {
+    String? groupId,
+    Map<String, dynamic> props,
+  });
 
   Future<void> submitReflection(
     String groupId,

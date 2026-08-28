@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../state/app_state.dart';
 import 'group_info_screen.dart';
+import 'no_show_sheet.dart';
 import 'question_sheet.dart';
 import 'venue_vote_card.dart';
 
@@ -27,10 +29,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Earlier voters cannot read anyone else's ballot (by design), so their screen receives
-    // no row-level event when the final person votes. Refresh the tiny group projection rather
-    // than weakening ballot privacy merely to make Realtime observable. Ten seconds is quick
-    // enough for a result while keeping this far below chat traffic.
+    // The flaking acknowledgement is a "come back later" surface: it can only be known
+    // once the rest of the group has voted, which is after the meetup, so entering the
+    // chat is where we check for it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAckNoShow());
+    // Earlier voters cannot read anyone else's ballot (by design), so there is no private
+    // row event to observe when the final person votes. Refresh the small group projection
+    // instead of weakening ballot privacy merely to make Realtime convenient.
     _groupRefresh = Timer.periodic(
       const Duration(seconds: 10),
       (_) => widget.state.refreshGroup(),
@@ -43,6 +48,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _input.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  Future<void> _maybeAckNoShow() async {
+    final gid = widget.state.group!.id;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'noshow_ack_$gid';
+    if (prefs.getBool(key) ?? false) return;
+    if (!await widget.state.repo.wasMarkedNoShow(gid)) return;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: surface,
+      isScrollControlled: true,
+      builder: (_) => const NoShowSheet(),
+    );
+    // Shown once per group -- an absence acknowledged every launch would be its own
+    // small punishment, which is the opposite of the point.
+    await prefs.setBool(key, true);
   }
 
   void _send() {
@@ -59,6 +82,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  void _openGroup() => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => GroupInfoScreen(widget.state)),
+  );
+
   @override
   Widget build(BuildContext context) {
     final g = widget.state.group!;
@@ -68,21 +96,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         // Tapping the group name opens members, the way WhatsApp does it. There is no
         // standalone profile page anywhere in this product.
         title: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => GroupInfoScreen(widget.state)),
-          ),
+          onTap: _openGroup,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Your group', style: TextStyle(fontSize: 17)),
-              Text(
-                when,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.55),
-                ),
-              ),
+              Text(when, style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
         ),
@@ -92,7 +111,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             icon: const Icon(Icons.lightbulb_outline),
             onPressed: () => showModalBottomSheet(
               context: context,
-              backgroundColor: surface,
               isScrollControlled: true,
               builder: (_) => QuestionSheet(widget.state),
             ),
@@ -101,6 +119,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
       body: Column(
         children: [
+          _VenueShortcut(group: g, onTap: _openGroup),
           Expanded(
             child: StreamBuilder<List<Message>>(
               stream: widget.state.repo.watchMessages(g.id),
@@ -111,10 +130,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   controller: _scroll,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
                   itemCount: msgs.length,
                   itemBuilder: (context, i) => _bubble(msgs[i]),
                 );
@@ -123,8 +139,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ),
           SafeArea(
             top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+            child: Container(
+              color: surface,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               child: Row(
                 children: [
                   Expanded(
@@ -143,8 +160,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   const SizedBox(width: 8),
                   IconButton.filled(
                     onPressed: _send,
-                    style: IconButton.styleFrom(backgroundColor: accent),
-                    icon: const Icon(Icons.arrow_upward, color: Colors.black),
+                    style: IconButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: ink,
+                      minimumSize: const Size(48, 48),
+                    ),
+                    icon: const Icon(Icons.arrow_upward),
                   ),
                 ],
               ),
@@ -163,11 +184,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         child: Text(
           m.body,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 13,
-            height: 1.4,
-            color: Colors.white.withValues(alpha: 0.5),
-          ),
+          style: const TextStyle(fontSize: 13, height: 1.4, color: mutedInk),
         ),
       );
     }
@@ -194,10 +211,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     padding: const EdgeInsets.only(bottom: 3, left: 2),
                     child: Text(
                       m.authorName,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.5),
-                      ),
+                      style: const TextStyle(fontSize: 12, color: mutedInk),
                     ),
                   ),
                 Container(
@@ -207,20 +221,87 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: m.isMine ? accent : surface,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     m.body,
-                    style: TextStyle(
-                      height: 1.35,
-                      color: m.isMine ? Colors.black : Colors.white,
-                    ),
+                    style: const TextStyle(height: 1.35, color: ink),
                   ),
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The map used to be discoverable only by knowing that the chat title was tappable.
+/// That convention is familiar after someone has used WhatsApp, but it is a bad demo
+/// dependency and hides the most concrete part of showing up. This row names the venue,
+/// names the action, and still keeps the full map in group info where it has room.
+class _VenueShortcut extends StatelessWidget {
+  const _VenueShortcut({required this.group, required this.onTap});
+
+  final Group group;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final venue = group.chosenVenue ?? group.venueOptions.first;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Material(
+        color: surface,
+        borderRadius: BorderRadius.circular(cardRadius),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(cardRadius),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(
+                    color: accentPale,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.map_outlined,
+                    color: inkDeep,
+                    size: 21,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        venue.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        venue.address,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'View map',
+                  style: TextStyle(color: inkDeep, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right, color: inkDeep),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

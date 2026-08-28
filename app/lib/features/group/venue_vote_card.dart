@@ -51,8 +51,8 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
     try {
       await widget.state.repo.castVenueVote(widget.state.group!.id, optionId);
       await _load();
-      // The final ballot may have created venue_selections in the same transaction. Refresh
-      // the shared Group so tapping the header immediately shows the actual result and map.
+      // The final ballot may create venue_selections in the same transaction. Refreshing the
+      // shared projection makes the selected venue appear in chat and on the map immediately.
       await widget.state.refreshGroup();
     } catch (err) {
       if (!mounted) return;
@@ -68,58 +68,70 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
   @override
   Widget build(BuildContext context) {
     final g = widget.state.group!;
-    final total = _tally.values.fold<int>(0, (a, b) => a + b);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(cardRadius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.how_to_vote_outlined, size: 18, color: accent),
-              const SizedBox(width: 8),
-              Text(
-                g.chosenVenue == null
-                    ? 'Where should you go?'
-                    : '${g.chosenVenue!.name} selected',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.how_to_vote_outlined,
+                  size: 19,
+                  color: inkDeep,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  g.chosenVenue == null
+                      ? 'Where should you go?'
+                      : '${g.chosenVenue!.name} selected',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 10),
           Text(
             g.chosenVenue == null
-                ? 'Anonymous — nobody sees who picked what.'
+                ? 'Anonymous. Nobody sees who picked what.'
                 : 'The result is shared. Individual ballots stay private.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.5),
-            ),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: LinearProgressIndicator(),
-            )
+            for (var i = 0; i < 2; i++)
+              Container(
+                height: 72,
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(inputRadius),
+                ),
+              )
           else
-            for (final v in g.venueOptions)
-              _option(v, _tally[v.id] ?? 0, total),
+            for (final v in g.venueOptions) _option(v, _tally[v.id] ?? 0),
         ],
       ),
     );
   }
 
-  Widget _option(VenueOption v, int votes, int total) {
+  Widget _option(VenueOption v, int votes) {
     final mine = _myVote == v.id;
     final selected = widget.state.group!.chosenVenueId == v.id;
-    final share = total == 0 ? 0.0 : votes / total;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
@@ -128,11 +140,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            color: mine || selected ? accentPale : bg,
+            borderRadius: BorderRadius.circular(inputRadius),
             border: Border.all(
-              color: mine || selected
-                  ? accent
-                  : Colors.white.withValues(alpha: 0.12),
+              color: mine || selected ? inkDeep : Colors.transparent,
               width: mine || selected ? 1.5 : 1,
             ),
           ),
@@ -148,13 +159,24 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
                     ),
                   ),
                   if (selected) ...[
-                    const Icon(Icons.check_circle, size: 16, color: accent),
+                    const Icon(Icons.check_circle, size: 16, color: inkDeep),
                     const SizedBox(width: 6),
                   ],
-                  Text(
-                    '$votes',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mine || selected ? accent : surface,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$votes',
+                      style: const TextStyle(
+                        color: ink,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
@@ -162,22 +184,10 @@ class _VenueVoteCardState extends State<VenueVoteCard> {
               const SizedBox(height: 4),
               Text(
                 v.pitch,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 13,
                   height: 1.35,
-                  color: Colors.white.withValues(alpha: 0.65),
-                ),
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: share,
-                  minHeight: 4,
-                  backgroundColor: Colors.white.withValues(alpha: 0.08),
-                  valueColor: AlwaysStoppedAnimation(
-                    mine ? accent : Colors.white24,
-                  ),
+                  color: bodyInk,
                 ),
               ),
             ],

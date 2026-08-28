@@ -10,6 +10,7 @@ import 'state/app_state.dart';
 import 'features/after/after_flow.dart';
 import 'features/after/contacts_screen.dart';
 import 'features/group/group_chat_screen.dart';
+import 'features/group/no_show_sheet.dart';
 import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
@@ -26,8 +27,9 @@ class _ShowUpAppState extends State<ShowUpApp> {
   /// and needs no cloud project.
   static const _useSupabase = bool.fromEnvironment('USE_SUPABASE');
 
-  late final Repository _repo =
-      _useSupabase ? SupabaseRepository(Supabase.instance.client) : MockRepository();
+  late final Repository _repo = _useSupabase
+      ? SupabaseRepository(Supabase.instance.client)
+      : MockRepository();
   late final AppState _state = AppState(_repo, initialPhase: _initialPhase());
 
   Phase _initialPhase() {
@@ -60,18 +62,26 @@ class _ShowUpAppState extends State<ShowUpApp> {
       theme: buildTheme(),
       home: ListenableBuilder(
         listenable: _state,
-        builder: (context, _) => Stack(children: [
-          switch (_state.phase) {
-            Phase.auth       => AuthScreen(_state),
-            Phase.onboarding => OnboardingScreen(_state),
-            Phase.waiting    => WaitingScreen(_state),
-            Phase.matched ||
-            Phase.during     => GroupChatScreen(_state),
-            Phase.after      => AfterFlow(_state),
-            Phase.contacts   => ContactsScreen(_state),
-          },
-          _DevJump(_state),
-        ]),
+        // Multiline fields use Return for a newline, so tapping the canvas is the only
+        // universal dismissal gesture. Keeping it at the shell means future screens
+        // inherit the behavior instead of each rediscovering the keyboard trap.
+        builder: (context, _) => GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: Stack(
+            children: [
+              switch (_state.phase) {
+                Phase.auth => AuthScreen(_state),
+                Phase.onboarding => OnboardingScreen(_state),
+                Phase.waiting => WaitingScreen(_state),
+                Phase.matched || Phase.during => GroupChatScreen(_state),
+                Phase.after => AfterFlow(_state),
+                Phase.contacts => ContactsScreen(_state),
+              },
+              _DevJump(_state),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -92,13 +102,28 @@ class _DevJump extends StatelessWidget {
       right: 8,
       bottom: 92,
       child: SafeArea(
-        child: PopupMenuButton<Phase>(
+        child: PopupMenuButton<Object>(
           tooltip: 'Jump to step',
           icon: const CircleAvatar(
-            radius: 18, backgroundColor: Colors.white12,
-            child: Icon(Icons.fast_forward, size: 18, color: Colors.white54),
+            radius: 20,
+            backgroundColor: ink,
+            child: Icon(Icons.fast_forward, size: 18, color: accent),
           ),
           onSelected: (p) async {
+            if (p == 'noshow') {
+              // Preview the flaking acknowledgement. There is no attendance data in the
+              // mock to derive it from, so flip the flag and show the sheet directly.
+              if (state.repo is MockRepository) {
+                (state.repo as MockRepository).demoNoShow = true;
+              }
+              await showModalBottomSheet<void>(
+                context: context,
+                backgroundColor: surface,
+                isScrollControlled: true,
+                builder: (_) => const NoShowSheet(),
+              );
+              return;
+            }
             if (p == Phase.matched && state.group == null) {
               // Mock: fabricate a group. Real backend: just fetch whatever run-matching
               // has already written for this user.
@@ -109,14 +134,25 @@ class _DevJump extends StatelessWidget {
               return;
             }
             if (p == Phase.contacts) return state.loadContacts();
-            state.goTo(p);
+            if (p is Phase) state.goTo(p);
           },
           itemBuilder: (_) => const [
-            PopupMenuItem(value: Phase.onboarding, child: Text('1 · Signup')),
-            PopupMenuItem(value: Phase.waiting,    child: Text('2 · Waiting')),
-            PopupMenuItem(value: Phase.matched,    child: Text('3 · Group chat + vote')),
-            PopupMenuItem(value: Phase.after,      child: Text('4 · After the meetup')),
-            PopupMenuItem(value: Phase.contacts,   child: Text('5 · Numbers')),
+            PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
+            PopupMenuItem(value: Phase.waiting, child: Text('2 - Waiting')),
+            PopupMenuItem(
+              value: Phase.matched,
+              child: Text('3 - Group chat + vote'),
+            ),
+            PopupMenuItem(
+              value: Phase.after,
+              child: Text('4 - After the meetup'),
+            ),
+            PopupMenuItem(value: Phase.contacts, child: Text('5 - Numbers')),
+            PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'noshow',
+              child: Text('Preview no-show message'),
+            ),
           ],
         ),
       ),

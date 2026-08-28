@@ -96,7 +96,7 @@ class MockRepository implements Repository {
         Message(
           id: 'm0', authorId: 'system', authorName: '', avatar: '',
           body: 'Six of you matched on climbing, music and making things. '
-              'Pick a spot below — votes are anonymous.',
+              'Pick a spot below. Votes are anonymous.',
           sentAt: DateTime.now().subtract(const Duration(minutes: 5)),
           kind: MessageKind.system,
         ),
@@ -193,6 +193,16 @@ class MockRepository implements Repository {
   @override
   Future<void> submitAttendance(String groupId, Map<String, bool> showedUp) =>
       Future.delayed(_lag);
+
+  /// Flipped by the dev-jump menu ("· flip no-show") so the flaking acknowledgement can be
+  /// rehearsed. There is no real attendance data in the mock to derive it from.
+  bool demoNoShow = false;
+
+  @override
+  Future<bool> wasMarkedNoShow(String groupId) async {
+    await Future.delayed(_lag);
+    return demoNoShow;
+  }
 
   Set<String> _selected = {};
   @override

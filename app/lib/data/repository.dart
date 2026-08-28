@@ -6,7 +6,19 @@ import '../models/models.dart';
 /// demoed against MockRepository while the edge functions and schema are still moving.
 /// SupabaseRepository implements the same contract; swapping is one line in main.dart.
 abstract class Repository {
+  /// Restore an existing session if there is one. The mock treats this as a no-op;
+  /// SupabaseRepository lets supabase_flutter rehydrate from disk.
   Future<void> signIn();
+
+  /// True once there is a usable session. Drives whether the app opens on the auth
+  /// screen or straight into onboarding.
+  Future<bool> isSignedIn();
+
+  /// Email OTP, step one: mail a six-digit code (and create the user if new).
+  Future<void> sendEmailOtp(String email);
+
+  /// Email OTP, step two: exchange the code for a session. Throws on a bad code.
+  Future<void> verifyEmailOtp(String email, String token);
 
   Future<Profile> submitProfile({
     required String displayName,
@@ -15,6 +27,9 @@ abstract class Repository {
     required List<String> tags,
     required String city,
     required List<String> availability,
+    /// Local file path from the image picker. Uploaded to Supabase Storage and sent
+    /// to submit-profile as photo_url. Null is allowed; the edge function accepts it.
+    String? photoPath,
   });
 
   /// Null until the matching sweep has placed you in a group.

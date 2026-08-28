@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/theme.dart';
 import '../../state/app_state.dart';
@@ -22,23 +25,66 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   final _name = TextEditingController();
   final _passion = TextEditingController();
+  final _customTag = TextEditingController();
   final _picked = <String>{};
+  // PRD: pick from the fixed set "plus write your own (pokemon, anime, whatever)".
+  final _extraTags = <String>[];
   final _avail = <String>{'fri_eve'};
   String _avatar = '🧗';
+  XFile? _photo;
   bool _busy = false;
 
+  // NOTE: the PRD calls the photo required, but the widget test and the mock demo flow
+  // treat it as optional. Left non-blocking here pending a team call; the upload path is
+  // fully wired either way (see SupabaseRepository._uploadPhoto).
   bool get _valid =>
       _name.text.trim().isNotEmpty && _passion.text.trim().length > 10 &&
       _picked.isNotEmpty && _avail.isNotEmpty;
 
+  Future<void> _pickPhoto() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1200,
+      imageQuality: 82,
+    );
+    if (picked != null) setState(() => _photo = picked);
+  }
+
+  void _addCustomTag() {
+    final tag = _customTag.text.trim().toLowerCase();
+    if (tag.isEmpty || _picked.contains(tag)) return;
+    setState(() {
+      if (!_interests.contains(tag)) _extraTags.add(tag);
+      _picked.add(tag);
+      _customTag.clear();
+    });
+  }
+
   Future<void> _submit() async {
     setState(() => _busy = true);
-    final p = await widget.state.repo.submitProfile(
-      displayName: _name.text.trim(), avatar: _avatar,
-      passion: _passion.text.trim(), tags: _picked.toList(),
-      city: 'SF', availability: _avail.toList(),
-    );
-    await widget.state.completeOnboarding(p);
+    try {
+      final p = await widget.state.repo.submitProfile(
+        displayName: _name.text.trim(), avatar: _avatar,
+        passion: _passion.text.trim(), tags: _picked.toList(),
+        city: 'SF', availability: _avail.toList(),
+        photoPath: _photo?.path,
+      );
+      await widget.state.completeOnboarding(p);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't create your profile. $e")),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _passion.dispose();
+    _customTag.dispose();
+    super.dispose();
   }
 
   @override
@@ -60,7 +106,33 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               decoration: const InputDecoration(hintText: 'First name')),
           const SizedBox(height: 24),
 
-          const _Label('Pick a photo'),
+          const _Label('Add a photo'),
+          Text('Anything but your face — a view, a plant, your dog.',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: _pickPhoto,
+            child: Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: surface,
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: _photo == null ? Colors.white24 : accent, width: 2),
+                image: _photo == null
+                    ? null
+                    : DecorationImage(
+                        image: FileImage(File(_photo!.path)), fit: BoxFit.cover),
+              ),
+              child: _photo == null
+                  ? const Icon(Icons.add_a_photo_outlined, color: Colors.white38)
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          const _Label('Pick a chat icon'),
           Wrap(spacing: 10, children: [
             for (final a in _avatars)
               GestureDetector(
@@ -80,12 +152,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
           const _Label('What are you into?'),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final i in _interests)
+            for (final i in [..._interests, ..._extraTags])
               FilterChip(
                 label: Text(i),
                 selected: _picked.contains(i),
                 onSelected: (v) => setState(() => v ? _picked.add(i) : _picked.remove(i)),
               ),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _customTag,
+                onSubmitted: (_) => _addCustomTag(),
+                decoration: const InputDecoration(
+                  hintText: 'Add your own — anime, pokemon, whatever',
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(onPressed: _addCustomTag, icon: const Icon(Icons.add)),
           ]),
           const SizedBox(height: 24),
 

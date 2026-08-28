@@ -1,7 +1,9 @@
 // Domain models. Deliberately plain: no codegen, no freezed, no json_serializable.
 // Hand-written fromMap keeps the Supabase swap honest without a build_runner step.
 
-enum Phase { onboarding, waiting, matched, during, after, contacts }
+// `auth` is the first phase only when the app runs against the real backend
+// (--dart-define=USE_SUPABASE=true); the mock flow skips straight to onboarding.
+enum Phase { auth, onboarding, waiting, matched, during, after, contacts }
 
 class Profile {
   final String id;

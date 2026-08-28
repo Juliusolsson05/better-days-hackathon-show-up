@@ -22,7 +22,7 @@ declare
     requested_count integer;
     unique_count integer;
 begin
-    if jsonb_typeof(member_rows) <> 'array' then
+    if member_rows is null or jsonb_typeof(member_rows) <> 'array' then
         raise exception 'member_rows must be a JSON array' using errcode = '22023';
     end if;
 

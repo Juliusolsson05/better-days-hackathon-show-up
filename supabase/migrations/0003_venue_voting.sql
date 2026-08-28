@@ -101,7 +101,8 @@ begin
         return;
     end if;
 
-    if jsonb_typeof(options) <> 'array'
+    if options is null
+       or jsonb_typeof(options) <> 'array'
        or jsonb_array_length(options) not between 2 and 3 then
         raise exception 'venue options must be a JSON array containing two or three rows'
             using errcode = '22023';

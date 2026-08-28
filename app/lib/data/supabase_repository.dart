@@ -242,6 +242,12 @@ class SupabaseRepository implements Repository {
       // stays readable until every environment has installed real options; deleting it now
       // would turn a backwards-compatible migration into a coordinated flag day.
       final venue = (g['venue'] as Map<String, dynamic>?) ?? const {};
+      if (venue['name'] == 'Venue vote pending') {
+        // Group creation commits before external venue retrieval so it can never be partial.
+        // Do not open a chat with no ballot: waiting_screen keeps polling, and the next read
+        // succeeds immediately after options plus their chat card commit together.
+        return null;
+      }
       final fallback = VenueOption(
         id: 'venue-$groupId',
         name: (venue['name'] as String?) ?? 'Venue to be confirmed',

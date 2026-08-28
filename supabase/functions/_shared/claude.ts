@@ -1,5 +1,5 @@
 // Claude does the reasoning half of the pipeline: turning free text into structured tags,
-// picking a venue and activity for a group, and writing each person's question.
+// naming the group's activity, and writing each person's question.
 //
 // Why both this and voyage.ts: the embedding finds the topic neighbourhood but cannot tell
 // a stance from its opposite -- "I love hunting" and "I think hunting is barbaric" embed
@@ -52,11 +52,6 @@ export async function extractTags(passion: string, tags: string[]): Promise<Prof
 }
 
 const GroupPlan = z.object({
-  venue: z.object({
-    name: z.string(),
-    address: z.string(),
-    why: z.string().describe('One line the group will actually read'),
-  }),
   activity: z.string(),
   questions: z.array(z.object({
     user_id: z.string(),
@@ -89,11 +84,11 @@ export async function planGroup(
         `- ${m.user_id} (${m.display_name}) | ${m.tags.join(', ')} | ${m.passion}`).join('\n')}`,
     }],
     system:
-      'Plan one evening for these six people who have never met. Pick a real venue in the ' +
-      'named city and an activity that suits the group. Then pair everyone up (each person ' +
-      'appears exactly once as user_id) and write each person a question about their ' +
-      "pair's passion, using the pair's first name. The question should be answerable at " +
-      'length by someone who cares about it, and should not be answerable yes or no.',
+      'Plan an activity for these people who have never met. Do not name or choose a venue; ' +
+      'a separate retrieval system grounds that decision in a verified place corpus. Pair ' +
+      'everyone up (each person appears exactly once as user_id) and write each person a ' +
+      "question about their pair's passion, using the pair's first name. The question should " +
+      'be answerable at length by someone who cares about it, and not answerable yes or no.',
   });
   if (!res.parsed_output) throw new Error('group planning returned no parsed output');
   return res.parsed_output;

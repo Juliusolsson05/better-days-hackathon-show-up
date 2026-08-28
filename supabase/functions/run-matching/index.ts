@@ -166,7 +166,10 @@ Deno.serve(async (req) => {
       // independent PostgREST writes left partial groups whenever a later request failed.
       const { data: groupId, error: groupErr } = await db.rpc('create_matched_group', {
         meetup_at: nextSlot(slot),
-        fallback_venue: plan.venue,
+        // groups.venue is still NOT NULL for backwards compatibility, but the model no
+        // longer invents its contents. A recognisable pending sentinel lets currentGroup()
+        // keep the phone in the waiting state until the real ballot transaction lands.
+        fallback_venue: { name: 'Venue vote pending', address: '' },
         group_activity: plan.activity,
         distance: seedDistance,
         member_rows: picked.map((id) => ({
@@ -185,6 +188,7 @@ Deno.serve(async (req) => {
         }
         throw groupErr;
       }
+      if (!groupId) throw new Error('create_matched_group returned no group id');
 
       for (const id of picked) unassigned.delete(id);
       await Promise.all(picked.map((id) =>

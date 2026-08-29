@@ -237,8 +237,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void goTo(Phase p) {
-    phase = p;
+  /// Leave the completed recap at its durable endpoint. Returning to `matched` here would create a
+  /// second client-only route into a lifecycle the server already marks completed.
+  void finishCurrentExperience() {
+    group = null;
+    assignment = null;
+    contacts = const [];
+    phase = Phase.waiting;
     notifyListeners();
   }
 

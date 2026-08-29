@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
-import '../../models/models.dart';
 import '../../state/app_state.dart';
 
 /// The intended endpoint. Once numbers are exchanged the group can leave the app, and
@@ -34,20 +33,20 @@ class ContactsScreen extends StatelessWidget {
             const SizedBox(height: 20),
             Center(
               child: Text(
-                'No matches this time',
+                'No shared contacts',
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
             ),
             const SizedBox(height: 10),
             Center(
               child: Text(
-                'You are in the next one automatically.',
+                'You will be included in the next meetup automatically.',
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
             ),
           ] else ...[
             Text(
-              '${contacts.length} of you picked each other.',
+              'Contact details',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 20),
@@ -90,16 +89,14 @@ class ContactsScreen extends StatelessWidget {
           ],
           const SizedBox(height: 30),
           Text(
-            'The group chat stays open. Nothing here expires.',
+            'These details came from this meetup.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
-          // Contacts are a durable endpoint, not a modal dead end. The explicit route back keeps
-          // the still-open group chat reachable after either a mutual match or an empty result.
-          OutlinedButton(
-            onPressed: () => state.goTo(Phase.matched),
-            child: const Text('Back to group chat'),
+          FilledButton(
+            onPressed: state.finishCurrentExperience,
+            child: const Text('Done'),
           ),
         ],
       ),

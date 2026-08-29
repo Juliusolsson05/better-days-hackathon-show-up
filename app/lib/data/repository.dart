@@ -42,6 +42,10 @@ abstract class Repository {
   /// Null until the matching sweep has placed you in a group.
   Future<Group?> currentGroup();
 
+  /// Durable phase for the group returned by [currentGroup]. Production reads this from the same
+  /// server-owned lifecycle RPC; the mock derives it only for isolated UI tests.
+  Future<ExperienceState> experienceState(String groupId);
+
   /// Membership is server-created; RSVP is the one decision the matched person owns.
   Future<RsvpStatus> myRsvp(String groupId);
   Future<void> setRsvp(String groupId, RsvpStatus status);
@@ -57,6 +61,18 @@ abstract class Repository {
   /// no-op rather than a duplicate. A plain re-send could not tell those cases apart.
   Future<void> retryMessage(String groupId, Message failed);
 
+  /// Safety writes are private, server-authorized actions. Reporting never notifies the subject;
+  /// blocking excludes the pair from future matching in either direction; leaving revokes this
+  /// caller's room, roster, photo, and history access immediately.
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  });
+  Future<void> blockUser(String blockedUserId);
+  Future<void> leaveGroup(String groupId);
+
   /// Voting is anonymous: you can read your own ballot and the tally, never who voted.
   Future<void> castVenueVote(String groupId, String optionId);
   Future<String?> myVenueVote(String groupId);
@@ -64,13 +80,13 @@ abstract class Repository {
 
   Future<Assignment> assignment(String groupId);
 
-  /// Appends one product-funnel event.
+  /// Appends one verified telemetry or product-funnel event.
   ///
   /// This is the ONLY path from the client to ClickHouse, and it is deliberately
   /// indirect -- ClickHouse takes arbitrary SQL and has no per-row permissions, so a
   /// credential in the app binary would expose the whole population. The `track` edge
-  /// function holds the credential and accepts only a whitelisted event name about the
-  /// calling user.
+  /// function holds the credential, accepts only a whitelist about the calling user, and reads
+  /// every durable product fact back from Postgres before it can enter the funnel.
   ///
   /// Fire-and-forget by contract: analytics must never be able to fail a user action,
   /// so implementations swallow their errors rather than propagating them.

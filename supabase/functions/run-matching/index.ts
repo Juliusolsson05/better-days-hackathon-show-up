@@ -7,7 +7,13 @@ import { createClient } from "npm:@supabase/supabase-js@2.47.10";
 import { arr, ch, emit } from "../_shared/clickhouse.ts";
 import { planGroup } from "../_shared/claude.ts";
 import { openChat } from "../_shared/chat.ts";
-import { haveOpposingStances, opposingStances } from "../_shared/matching.ts";
+import { canInvokeMatching } from "../_shared/matching_auth.ts";
+import {
+  blockedPairKey,
+  haveBlockedRelationship,
+  haveOpposingStances,
+  opposingStances,
+} from "../_shared/matching.ts";
 import { nextSlot } from "../_shared/schedule.ts";
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
@@ -22,7 +28,8 @@ const MAX_GROUP = 6;
 // Mirrors supabase/functions/analytics/index.ts, which does the same for the same reason.
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, content-type, x-matching-job-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -40,8 +47,15 @@ Deno.serve(async (req) => {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const auth = req.headers.get("Authorization") ?? "";
-    if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
+    if (
+      !canInvokeMatching({
+        authorization: req.headers.get("Authorization") ?? "",
+        operatorSecret: req.headers.get("x-matching-job-secret") ?? "",
+        serviceRoleKey,
+        anonKey: Deno.env.get("SUPABASE_ANON_KEY"),
+        matchingJobSecret: Deno.env.get("MATCHING_JOB_SECRET"),
+      })
+    ) {
       return new Response("forbidden", { status: 403, headers: CORS });
     }
 
@@ -120,6 +134,23 @@ Deno.serve(async (req) => {
         headers: CORS,
       });
     }
+
+    // Blocks are one-way private decisions, but exclusion is symmetric. Load only relationships
+    // whose two participants are in this eligible pool; the pair set then keeps the hot candidate
+    // loop local and avoids revealing block state to ClickHouse or the model prompt.
+    const poolIds = pool.map((profile) => profile.id);
+    const { data: blockedRows, error: blockedErr } = await db.from(
+      "blocked_users",
+    )
+      .select("blocker_id,blocked_id")
+      .in("blocker_id", poolIds)
+      .in("blocked_id", poolIds);
+    if (blockedErr) throw blockedErr;
+    const blockedPairs = new Set(
+      (blockedRows ?? []).map((row) =>
+        blockedPairKey(row.blocker_id, row.blocked_id)
+      ),
+    );
 
     // A restarted sweep must not form a second arrangement from people committed before the
     // crash. The RPC is the final race-proof authority; this filter keeps ordinary retries from
@@ -222,6 +253,11 @@ Deno.serve(async (req) => {
           if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) {
             continue;
           }
+          if (
+            picked.some((memberId) =>
+              haveBlockedRelationship(blockedPairs, memberId, cand.user_id)
+            )
+          ) continue;
           // NOT hasAny is intentionally retained above as the cheap seed/candidate path for
           // canonical rows. This guard is still authoritative: it handles legacy/free-form
           // spellings and checks every person already picked, not merely the seed. Otherwise

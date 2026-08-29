@@ -24,6 +24,8 @@ class SupabaseRepository implements Repository {
   // human-facing name/photo, and this cache avoids joining profiles into a realtime stream (the
   // stream API intentionally returns table rows, not embedded PostgREST relations).
   Map<String, Member> _membersByUserId = const {};
+  String? _experienceGroupId;
+  ExperienceState? _experienceState;
 
   GoTrueClient get _auth => _client.auth;
 
@@ -136,22 +138,31 @@ class SupabaseRepository implements Repository {
   @override
   Future<Group?> currentGroup() async {
     final uid = _userId;
-    final membership = await _client
-        .from('group_members')
-        .select('group_id')
-        .eq('user_id', uid)
-        .order('joined_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    if (membership == null) return null;
-
-    final groupId = membership['group_id'] as String;
+    final rows = await _client.rpc<List<dynamic>>('current_experience');
+    if (rows.isEmpty) {
+      _experienceGroupId = null;
+      _experienceState = null;
+      return null;
+    }
+    final experience = Map<String, dynamic>.from(rows.single as Map);
+    final groupId = experience['group_id'] as String;
+    final lifecycle = _decodeExperienceState(
+      experience['lifecycle_state'] as String,
+    );
+    _experienceGroupId = groupId;
+    _experienceState = lifecycle;
+    if (lifecycle == ExperienceState.completed ||
+        lifecycle == ExperienceState.cancelled) {
+      return null;
+    }
 
     // Start the three independent reads together. `Future`s are eager in Dart, so awaiting them
     // below does not serialize the network round trips.
     final groupFuture = _client
         .from('groups')
-        .select('id,event_at,venue,activity,chosen_venue_id,venue_status')
+        .select(
+          'id,event_at,venue,activity,chosen_venue_id,venue_status,needs_repair',
+        )
         .eq('id', groupId)
         .single();
     final memberRowsFuture = _client
@@ -170,6 +181,11 @@ class SupabaseRepository implements Repository {
     final groupRow = await groupFuture;
     final memberRows = await memberRowsFuture;
     final venueRows = await venueRowsFuture;
+
+    // A departure can invalidate the assignment derangement and minimum headcount. Hiding the
+    // room from remaining members is safer than presenting a chat whose roster/question contracts
+    // are no longer true; operations can repair the group and clear this server-owned flag.
+    if (groupRow['needs_repair'] == true) return null;
 
     final members = await Future.wait(
       memberRows.map((row) async {
@@ -216,6 +232,20 @@ class SupabaseRepository implements Repository {
   }
 
   @override
+  Future<ExperienceState> experienceState(String groupId) async {
+    if (_experienceGroupId == groupId && _experienceState != null) {
+      return _experienceState!;
+    }
+    // currentGroup owns the RPC and its group projection. Reusing it here keeps one server answer
+    // for restoration instead of racing two lifecycle reads across a deadline boundary.
+    await currentGroup();
+    if (_experienceGroupId != groupId || _experienceState == null) {
+      return ExperienceState.cancelled;
+    }
+    return _experienceState!;
+  }
+
+  @override
   Future<RsvpStatus> myRsvp(String groupId) async {
     final row = await _client
         .from('rsvps')
@@ -234,14 +264,14 @@ class SupabaseRepository implements Repository {
     if (status == RsvpStatus.pending) {
       throw ArgumentError('RSVP can only be confirmed or declined by the user');
     }
-    await _client.from('rsvps').upsert({
-      'group_id': groupId,
-      'user_id': _userId,
-      'status': status.name,
-    }, onConflict: 'group_id,user_id');
-    // Postgres is the product fact. The funnel may observe it only after that write succeeds,
-    // so a ClickHouse outage cannot create an RSVP the app itself does not have.
-    await track('rsvp', groupId: groupId, props: {'status': status.name});
+    await _client.rpc<void>(
+      'set_rsvp',
+      params: rsvpSubmissionParams(groupId: groupId, status: status),
+    );
+    // The tracking boundary reads this row back before accepting the funnel event. Analytics can
+    // fail without rolling back the RSVP, but a modified client cannot claim an RSVP that is not
+    // already durable in Postgres.
+    await track('rsvp', groupId: groupId);
   }
 
   /// Messages this device has sent but not yet seen echoed back, per group.
@@ -385,28 +415,48 @@ class SupabaseRepository implements Repository {
     _repaint[groupId]?.call();
   }
 
+  @override
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  }) async {
+    await _client.rpc<dynamic>(
+      'report_user',
+      params: {
+        'grp': groupId,
+        'reported': reportedUserId,
+        'report_reason': reason,
+        'report_details': details,
+      },
+    );
+  }
+
+  @override
+  Future<void> blockUser(String blockedUserId) =>
+      _client.rpc<void>('block_user', params: {'blocked': blockedUserId});
+
+  @override
+  Future<void> leaveGroup(String groupId) =>
+      _client.rpc<void>('leave_group', params: {'grp': groupId});
+
   Future<void> _insertUserMessage(
     String groupId,
     String body,
     String clientMsgId,
   ) async {
-    // Both the first attempt and every retry use the same conflict-safe write. A transport
-    // timeout cannot reveal whether Postgres committed, so a plain INSERT on retry turns the
-    // unique key into a user-visible error. DO NOTHING makes the stable client id the protocol:
-    // either this call writes the row or an indistinguishable earlier attempt already did.
-    await _client
-        .from('messages')
-        .upsert(
-          {
-            'group_id': groupId,
-            'user_id': _userId,
-            'body': body,
-            'kind': 'user',
-            'client_msg_id': clientMsgId,
-          },
-          onConflict: 'client_msg_id',
-          ignoreDuplicates: true,
-        );
+    // The database derives author/kind/timestamp, verifies membership, applies the rate limit, and
+    // recognizes an exact client-id replay. Keeping every first attempt and retry on this one RPC
+    // means a modified client cannot bypass those rules through the messages table.
+    await _client.rpc<void>(
+      'send_message',
+      params: messageSubmissionParams(
+        groupId: groupId,
+        clientMsgId: clientMsgId,
+        body: body,
+      ),
+    );
   }
 
   @override
@@ -481,7 +531,7 @@ class SupabaseRepository implements Repository {
     try {
       final response = await _client.functions.invoke(
         'track',
-        body: {'name': event, 'group_id': ?groupId, 'props': props},
+        body: {'name': event, 'group_id': groupId, 'props': props},
       );
       // invoke() returns non-2xx responses as data rather than necessarily throwing. If
       // we ignore the status, a rejected event looks identical to a written one in debug
@@ -676,6 +726,32 @@ Map<String, dynamic> reflectionSubmissionParams({
   required String text,
   required bool wasFallback,
 }) => {'grp': groupId, 'reflection_text': text, 'fallback': wasFallback};
+
+/// The public client payload for `send_message` contains no authoritative author metadata.
+/// Postgres owns the user id, message kind, timestamp, membership check, and rate limit.
+@visibleForTesting
+Map<String, dynamic> messageSubmissionParams({
+  required String groupId,
+  required String clientMsgId,
+  required String body,
+}) => {'grp': groupId, 'client_id': clientMsgId, 'message_body': body};
+
+/// The RSVP payload carries only the member's decision. Postgres derives the caller, verifies
+/// active membership, enforces the deadline, and marks a declined assignment for repair.
+@visibleForTesting
+Map<String, dynamic> rsvpSubmissionParams({
+  required String groupId,
+  required RsvpStatus status,
+}) => {'grp': groupId, 'new_status': status.name};
+
+ExperienceState _decodeExperienceState(String value) => switch (value) {
+  'pre_meetup' => ExperienceState.preMeetup,
+  'during' => ExperienceState.during,
+  'after' => ExperienceState.after,
+  'completed' => ExperienceState.completed,
+  'cancelled' => ExperienceState.cancelled,
+  _ => throw FormatException('Unknown experience state: $value'),
+};
 
 /// RFC 4122 version 4, from the platform CSPRNG.
 ///

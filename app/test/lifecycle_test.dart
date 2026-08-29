@@ -1,6 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:showup/core/notifications.dart';
 import 'package:showup/data/mock_repository.dart';
+import 'package:showup/features/after/contacts_screen.dart';
 import 'package:showup/models/models.dart';
 import 'package:showup/state/app_state.dart';
 
@@ -52,6 +54,10 @@ class _OtpRepository extends MockRepository {
     targetName: 'Tom',
     question: 'What made you care about this?',
   );
+
+  @override
+  Future<ExperienceState> experienceState(String groupId) async =>
+      ExperienceState.preMeetup;
 }
 
 Group _futureGroup() => Group(
@@ -95,7 +101,7 @@ void main() {
 
       final nextLaunch = AppState(repo);
       await nextLaunch.restore();
-      expect(nextLaunch.phase, Phase.matched);
+      expect(nextLaunch.phase, Phase.waiting);
     },
   );
 
@@ -123,15 +129,62 @@ void main() {
       await repo.selectContacts('past-group', const {});
       final state = AppState(repo);
       await state.restore();
-      expect(state.phase, Phase.matched);
+      expect(state.phase, Phase.waiting);
 
       await state.handleNotificationTap(
         const NotificationTap('past-group', Rung.reflect),
       );
 
-      expect(state.phase, Phase.matched);
+      expect(state.phase, Phase.waiting);
     },
   );
+
+  test('finishing the recap cannot reopen the completed chat route', () {
+    final repo = _PastMeetupRepository();
+    addTearDown(repo.dispose);
+    final state = AppState(repo, initialPhase: Phase.contacts)
+      ..contacts = const [
+        MutualContact(
+          id: 'u2',
+          displayName: 'Tom',
+          avatar: '🎧',
+          phone: '+14155550100',
+        ),
+      ];
+
+    state.finishCurrentExperience();
+
+    expect(state.phase, Phase.waiting);
+    expect(state.group, isNull);
+    expect(state.assignment, isNull);
+    expect(state.contacts, isEmpty);
+  });
+
+  testWidgets('contact result has neutral framing and one completed exit', (
+    tester,
+  ) async {
+    final repo = _PastMeetupRepository();
+    addTearDown(repo.dispose);
+    final state = AppState(repo, initialPhase: Phase.contacts)
+      ..contacts = const [
+        MutualContact(
+          id: 'u2',
+          displayName: 'Tom',
+          avatar: '🎧',
+          phone: '+14155550100',
+        ),
+      ];
+
+    await tester.pumpWidget(MaterialApp(home: ContactsScreen(state)));
+
+    expect(find.text('Contact details'), findsOneWidget);
+    expect(find.textContaining('picked each other'), findsNothing);
+    expect(find.text('Back to group chat'), findsNothing);
+
+    await tester.tap(find.text('Done'));
+    await tester.pump();
+    expect(state.phase, Phase.waiting);
+  });
 
   test('RSVP persists before its funnel event is recorded', () async {
     final repo = _PastMeetupRepository();

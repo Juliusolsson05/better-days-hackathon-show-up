@@ -10,7 +10,7 @@ import 'reference_data.dart';
 ///
 /// Its groups, votes, and chat messages intentionally use local reference fixtures while the
 /// approved interaction model is reconciled with Show Up's automatic matching contracts. The
-/// production lifecycle never routes here: only debug/demo controls may enter [Phase.home].
+/// production lifecycle never imports or routes here; only main_reference.dart composes it.
 /// Making that boundary explicit prevents a convincing prototype from silently replacing the
 /// durable Repository-backed chat, ballot, and after-meetup flows.
 class ProductShell extends StatefulWidget {

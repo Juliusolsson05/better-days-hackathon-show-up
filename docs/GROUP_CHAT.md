@@ -24,7 +24,7 @@ A group only appears after `run-matching`. Locally:
 ```bash
 supabase start
 supabase db reset            # applies 0001
-# sign up 4-6 users through the app (USE_SUPABASE=true), then trigger matching:
+# sign up 4-6 users through the production app, then trigger matching:
 curl -X POST "$SUPABASE_URL/functions/v1/run-matching" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
   -H 'content-type: application/json' -d '{"city":"SF","slot":"fri_eve"}'

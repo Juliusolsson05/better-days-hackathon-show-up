@@ -188,6 +188,24 @@ class MockRepository implements Repository {
   }
 
   @override
+  Future<ExperienceState> experienceState(String groupId) async {
+    final current = await currentGroup();
+    if (current == null || current.id != groupId) {
+      return ExperienceState.cancelled;
+    }
+    if (await hasCompletedAfterFlow(groupId)) return ExperienceState.completed;
+    final now = DateTime.now();
+    if (now.isBefore(current.eventAt)) return ExperienceState.preMeetup;
+    if (now.isBefore(current.eventAt.add(const Duration(hours: 2)))) {
+      return ExperienceState.during;
+    }
+    if (now.isBefore(current.eventAt.add(const Duration(days: 7)))) {
+      return ExperienceState.after;
+    }
+    return ExperienceState.completed;
+  }
+
+  @override
   Future<RsvpStatus> myRsvp(String groupId) async {
     await Future.delayed(_lag);
     return _rsvp;
@@ -240,6 +258,23 @@ class MockRepository implements Repository {
   /// The mock never fails a send, so there is nothing to retry.
   @override
   Future<void> retryMessage(String groupId, Message failed) async {}
+
+  @override
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  }) => Future.delayed(_lag);
+
+  @override
+  Future<void> blockUser(String blockedUserId) => Future.delayed(_lag);
+
+  @override
+  Future<void> leaveGroup(String groupId) async {
+    await Future.delayed(_lag);
+    _group = null;
+  }
 
   void _emit() => _controller.add(List.unmodifiable(_messages));
 

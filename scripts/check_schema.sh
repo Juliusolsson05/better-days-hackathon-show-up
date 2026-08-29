@@ -21,6 +21,11 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when to_regprocedure('public.set_rsvp(uuid,text)') is not null then '0017'
+     when to_regprocedure('public.current_experience()') is not null then '0016'
+     when to_regprocedure('public.finalize_due_venue_votes()') is not null then '0015'
+     when to_regprocedure('public.leave_group(uuid)') is not null then '0014'
+     when to_regprocedure('public.send_message(uuid,uuid,text)') is not null then '0013'
      when to_regprocedure('private.invoke_weekly_matching()') is not null then '0012'
      when to_regprocedure(
           'public.complete_profile_submission(uuid,uuid,timestamp with time zone)'
@@ -65,8 +70,13 @@ case "$SCHEMA_STATE" in
   0010) SCHEMA_RANK=10 ;;
   0011) SCHEMA_RANK=11 ;;
   0012) SCHEMA_RANK=12 ;;
+  0013) SCHEMA_RANK=13 ;;
+  0014) SCHEMA_RANK=14 ;;
+  0015) SCHEMA_RANK=15 ;;
+  0016) SCHEMA_RANK=16 ;;
+  0017) SCHEMA_RANK=17 ;;
   *)
-    echo "local database is not a recognized 0001 through 0012 Show Up schema"
+    echo "local database is not a recognized 0001 through 0017 Show Up schema"
     exit 1
     ;;
 esac
@@ -97,6 +107,11 @@ if (( SCHEMA_RANK < 9 )); then PSQL_FILES+=(-f supabase/migrations/0009_profile_
 if (( SCHEMA_RANK < 10 )); then PSQL_FILES+=(-f supabase/migrations/0010_post_meetup_write_boundary.sql); fi
 if (( SCHEMA_RANK < 11 )); then PSQL_FILES+=(-f supabase/migrations/0011_profile_submission_version.sql); fi
 if (( SCHEMA_RANK < 12 )); then PSQL_FILES+=(-f supabase/migrations/0012_weekly_matching_cron.sql); fi
+if (( SCHEMA_RANK < 13 )); then PSQL_FILES+=(-f supabase/migrations/0013_message_write_boundary.sql); fi
+if (( SCHEMA_RANK < 14 )); then PSQL_FILES+=(-f supabase/migrations/0014_member_safety.sql); fi
+if (( SCHEMA_RANK < 15 )); then PSQL_FILES+=(-f supabase/migrations/0015_venue_vote_deadline.sql); fi
+if (( SCHEMA_RANK < 16 )); then PSQL_FILES+=(-f supabase/migrations/0016_current_experience.sql); fi
+if (( SCHEMA_RANK < 17 )); then PSQL_FILES+=(-f supabase/migrations/0017_rsvp_write_boundary.sql); fi
 
 # Every suite runs against the final in-transaction shape. Older tests protect invariants shared by
 # later migrations, while 0008/0009 specifically exercise the two write doors that moved behind
@@ -115,6 +130,11 @@ PSQL_FILES+=(
   -f supabase/tests/0010_post_meetup_write_boundary.sql
   -f supabase/tests/0011_profile_submission_version.sql
   -f supabase/tests/0012_weekly_matching_cron.sql
+  -f supabase/tests/0013_message_write_boundary.sql
+  -f supabase/tests/0014_member_safety.sql
+  -f supabase/tests/0015_venue_vote_deadline.sql
+  -f supabase/tests/0016_current_experience.sql
+  -f supabase/tests/0017_rsvp_write_boundary.sql
 )
 
 psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \

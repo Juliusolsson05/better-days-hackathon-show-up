@@ -1,5 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import {
+  blockedPairKey,
+  haveBlockedRelationship,
   haveOpposingStances,
   normalizeStance,
   normalizeStanceTags,
@@ -41,6 +43,13 @@ Deno.test("returns the canonical blocked tags used by the ClickHouse fast path",
     "stance:meat_eating",
     "stance:steakhouse",
   ]);
+});
+
+Deno.test("a one-way block excludes the pair in either matching order", () => {
+  const pairs = new Set([blockedPairKey("user-b", "user-a")]);
+  assertEquals(haveBlockedRelationship(pairs, "user-a", "user-b"), true);
+  assertEquals(haveBlockedRelationship(pairs, "user-b", "user-a"), true);
+  assertEquals(haveBlockedRelationship(pairs, "user-a", "user-c"), false);
 });
 
 Deno.test("does not infer a conflict from ordinary topic tags", () => {

@@ -105,8 +105,7 @@
   footer b { color: var(--text); }
 
   /* ---- Operator controls ----
-     A <details> so it is collapsed by default: the service-role key must not be sitting
-     on screen while the funnel is projected. Expand it, run the sweep, collapse it. */
+     The browser receives only a narrow matching-job credential, never a database key. */
   .control {
     margin-bottom: 34px; border: 1px solid var(--drop); border-radius: 12px;
     background: color-mix(in srgb, var(--drop) 9%, var(--surface));
@@ -175,26 +174,24 @@
       <span id="statusText">connecting…</span>
     </div>
   </header>
-  <p class="sub">Notified → RSVP’d → attended → left with each other’s numbers. The last bar is the point of the product.</p>
+  <p class="sub">Assigned → RSVP’d → attended → chose to share a number. The last bar is the point of the product.</p>
 
   <!--
     Operator controls. There is no other trigger for run-matching yet: pg_cron is the
-    production path (not set up), and the phone app can't call it because the function
-    gates on the service-role key, which must never ship in a client binary. So the sweep
-    is run from here, from a laptop, by whoever is driving the demo.
+    production path, and the phone app has no operator secret. The browser credential below can
+    trigger this one job but cannot read tables, bypass RLS, or act as another user.
   -->
   <details id="control" class="control">
     <summary>Operator controls — run the sweep</summary>
     <div class="body">
       <p class="warn">
-        The service-role key bypasses row-level security entirely. Paste it only on your
-        own machine; it is kept in this browser’s localStorage and sent only to
-        <code>/functions/v1/run-matching</code>. Collapse this panel before projecting.
+        Paste the matching-job secret. It is scoped to this one endpoint and cannot access the
+        database; the service-role key must never be entered into a browser.
       </p>
       <div class="grid">
         <div>
-          <label for="c-key">Service-role key</label>
-          <input id="c-key" type="password" placeholder="eyJ… service_role" autocomplete="off">
+          <label for="c-key">Matching-job secret</label>
+          <input id="c-key" type="password" placeholder="matching-only secret" autocomplete="off">
         </div>
         <div>
           <label for="c-city">City</label>
@@ -289,12 +286,12 @@ async function fetchAnalytics() {
 
 const FUNNEL_STAGES = [
   // Index here is the windowFunnel step number. The function's query lists the steps as
-  // notif_sent, rsvp, attended, number_shared -- so a user's `level` is the furthest of
+  // group_formed, rsvp, attended, number_shared -- so a user's `level` is the furthest of
   // these they reached, 0..4.
-  { step: 1, name: "Notified" },
+  { step: 1, name: "Assigned" },
   { step: 2, name: "RSVP’d" },
   { step: 3, name: "Attended" },
-  { step: 4, name: "Left with a number", win: true },
+  { step: 4, name: "Chose to share", win: true },
 ];
 
 function renderFunnel(rows) {
@@ -417,18 +414,18 @@ function startLoop() {
 
 // Trigger the weekly sweep. Same origin story as fetchAnalytics: run-matching now sets
 // CORS (its header comment always said it is browser-triggered), so a POST from this page
-// works. The key here is the SERVICE-ROLE key, not the anon key -- run-matching compares
-// the bearer token to SUPABASE_SERVICE_ROLE_KEY exactly, because a sweep writes groups for
-// people who are not the caller and must not be triggerable from a shipped app.
+// works. Authorization remains the public anon JWT required by the gateway; the separate header
+// carries a narrow secret checked only by run-matching. No database-privileged key enters JS.
 async function runSweep() {
   const btn = $("c-run");
   const out = $("c-out");
-  const key = $("c-key").value.trim();
+  const secret = $("c-key").value.trim();
   const city = $("c-city").value.trim() || "SF";
   const slot = $("c-slot").value;
 
-  if (!key) { out.className = "out bad"; out.textContent = "Paste the service-role key first."; return; }
-  localStorage.setItem("su_service_key", key);
+  if (!secret) { out.className = "out bad"; out.textContent = "Paste the matching-job secret first."; return; }
+  localStorage.setItem("su_matching_job_secret", secret);
+  localStorage.removeItem("su_service_key");
 
   btn.disabled = true;
   out.className = "out";
@@ -437,12 +434,16 @@ async function runSweep() {
   try {
     const res = await fetch(`${CFG.url}/functions/v1/run-matching`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${CFG.key}`,
+        "X-Matching-Job-Secret": secret,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ city, slot }),
     });
     if (res.status === 403) {
       out.className = "out bad";
-      out.textContent = "Rejected (403) — that is not the service-role key.";
+      out.textContent = "Rejected (403) — the matching-job secret is not valid.";
       return;
     }
     const body = await res.json().catch(() => ({}));
@@ -500,7 +501,10 @@ function showGate() {
 function showDash() {
   $("gate").classList.add("hidden");
   $("dash").classList.remove("hidden");
-  $("c-key").value = localStorage.getItem("su_service_key") || "";
+  // Delete the legacy browser copy proactively. If it ever held a real service-role credential,
+  // that project key still needs to be rotated; deleting localStorage is containment, not rotation.
+  localStorage.removeItem("su_service_key");
+  $("c-key").value = localStorage.getItem("su_matching_job_secret") || "";
   $("c-run").onclick = runSweep;
   startLoop();
 }

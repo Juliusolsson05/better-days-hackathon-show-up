@@ -1,87 +1,59 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/backend_config.dart';
 import 'core/notifications.dart';
 import 'core/theme.dart';
-import 'data/mock_repository.dart';
 import 'data/repository.dart';
-import 'data/supabase_repository.dart';
 import 'models/models.dart';
 import 'state/app_state.dart';
 import 'features/after/after_flow.dart';
 import 'features/after/contacts_screen.dart';
 import 'features/group/group_chat_screen.dart';
-import 'features/group/no_show_sheet.dart';
 import 'features/onboarding/auth_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/onboarding/waiting_screen.dart';
-import 'features/product/product_shell.dart';
 
 class ShowUpApp extends StatefulWidget {
-  const ShowUpApp({super.key, this.useMockRepositoryForTesting = false});
+  const ShowUpApp({
+    super.key,
+    required this.repository,
+    required this.initialPhase,
+    this.restoreSession = true,
+  });
 
-  /// Widget tests construct the shell without running main(), so Supabase has intentionally not
-  /// been initialized there. Keeping this override explicit preserves hermetic tests without
-  /// making every normal debug/release launch silently choose fixtures again.
-  @visibleForTesting
-  final bool useMockRepositoryForTesting;
+  /// The composition root owns the concrete repository. Production passes SupabaseRepository;
+  /// tests may pass a fixture without making the production library import or construct it.
+  final Repository repository;
+  final Phase initialPhase;
+  final bool restoreSession;
 
   @override
   State<ShowUpApp> createState() => _ShowUpAppState();
 }
 
 class _ShowUpAppState extends State<ShowUpApp> {
-  static const _showReferenceUi = bool.fromEnvironment('SHOW_REFERENCE_UI');
-
-  /// Main and this shell import one compile-time decision from backend_config.dart. The test-only
-  /// override is intentionally runtime-owned by the widget because `flutter test` does not invoke
-  /// main() and must not need credentials for a repository it never exercises.
-  late final bool _useSupabase =
-      useSupabaseBackend && !widget.useMockRepositoryForTesting;
-  late final Repository _repo = _useSupabase
-      ? SupabaseRepository(Supabase.instance.client)
-      : MockRepository();
+  late final Repository _repo = widget.repository;
   late final AppState _state = AppState(
     _repo,
-    initialPhase: _initialPhase(),
-    // The reference shell is intentionally a mock-only preview. It contains static
-    // example groups whose "join" controls are presentation prototypes, so routing a
-    // real session there would fork the product lifecycle away from Postgres truth.
-    // Debug builds make visual review convenient; SHOW_REFERENCE_UI makes the same
-    // preview available in a release-mode reference build without weakening production.
-    referenceUiPreview: !_useSupabase && (kDebugMode || _showReferenceUi),
+    initialPhase: widget.initialPhase,
   );
   late bool _restoring;
   Object? _restoreError;
-
-  Phase _initialPhase() {
-    if (!_useSupabase) return Phase.onboarding;
-    // A restored session means the user is past auth; a signed-in user with no profile
-    // yet is precisely the onboarding case.
-    return Supabase.instance.client.auth.currentSession == null
-        ? Phase.auth
-        : Phase.onboarding;
-  }
 
   StreamSubscription<NotificationTap>? _tapSub;
 
   @override
   void initState() {
     super.initState();
-    // `_useSupabase` reads widget, which Flutter attaches only after constructing State. Setting
-    // this here avoids evaluating that late field from a State field initializer too early.
-    _restoring = _useSupabase;
+    _restoring = widget.restoreSession;
     _repo.signIn();
     // Notification responses outlive individual screens. Subscribe before restoration so a
     // cold-start tap can be replayed once AppState has loaded the durable group.
     _tapSub = NotificationService.instance.taps.listen(
       _state.handleNotificationTap,
     );
-    if (_useSupabase) _restore();
+    if (widget.restoreSession) _restore();
   }
 
   Future<void> _restore() async {
@@ -101,8 +73,6 @@ class _ShowUpAppState extends State<ShowUpApp> {
   @override
   void dispose() {
     _tapSub?.cancel();
-    final repo = _repo;
-    if (repo is MockRepository) repo.dispose();
     super.dispose();
   }
 
@@ -153,166 +123,16 @@ class _ShowUpAppState extends State<ShowUpApp> {
           return GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-            child: Stack(
-              children: [
-                switch (_state.phase) {
-                  Phase.auth => AuthScreen(_state),
-                  Phase.onboarding => OnboardingScreen(_state),
-                  // Phase.home is never selected by real onboarding or restoration.
-                  // Keeping the branch in the production router avoids a second app
-                  // entrypoint solely for reference review, while AppState owns the
-                  // invariant that only an explicitly enabled preview can enter it.
-                  Phase.home => ProductShell(_state),
-                  Phase.waiting => WaitingScreen(_state),
-                  Phase.matched || Phase.during => GroupChatScreen(_state),
-                  Phase.after => AfterFlow(_state),
-                  Phase.contacts => ContactsScreen(_state),
-                },
-                // Demo controls compress a three-day lifecycle, but a production build
-                // must never let a client manufacture phases that only the server owns.
-                // The named define keeps rehearsals possible without quietly turning the
-                // debug affordance into part of the release product.
-                if (kDebugMode ||
-                    const bool.fromEnvironment('SHOW_DEMO_CONTROLS')) ...[
-                  _DevJump(_state),
-                  _DevLadder(_state),
-                ],
-              ],
-            ),
+            child: switch (_state.phase) {
+              Phase.auth => AuthScreen(_state),
+              Phase.onboarding => OnboardingScreen(_state),
+              Phase.waiting => WaitingScreen(_state),
+              Phase.matched || Phase.during => GroupChatScreen(_state),
+              Phase.after => AfterFlow(_state),
+              Phase.contacts => ContactsScreen(_state),
+            },
           );
         },
-      ),
-    );
-  }
-}
-
-/// Jumps straight to any point in the flow.
-///
-/// This is demo infrastructure, not a debug leftover: the flow spans three days of real
-/// time, so without it the post-meetup screens cannot be reached at all, let alone
-/// rehearsed. Gate it on kDebugMode before this ever ships.
-class _DevJump extends StatelessWidget {
-  final AppState state;
-  const _DevJump(this.state);
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      right: 8,
-      bottom: 92,
-      child: SafeArea(
-        child: PopupMenuButton<Object>(
-          tooltip: 'Jump to step',
-          icon: const CircleAvatar(
-            radius: 20,
-            backgroundColor: ink,
-            child: Icon(Icons.fast_forward, size: 18, color: accent),
-          ),
-          onSelected: (p) async {
-            if (p == 'noshow') {
-              // Preview the flaking acknowledgement. There is no attendance data in the
-              // mock to derive it from, so flip the flag and show the sheet directly.
-              if (state.repo is MockRepository) {
-                (state.repo as MockRepository).demoNoShow = true;
-              }
-              await showModalBottomSheet<void>(
-                context: context,
-                backgroundColor: surface,
-                isScrollControlled: true,
-                builder: (_) => const NoShowSheet(),
-              );
-              return;
-            }
-            if (p == Phase.matched && state.group == null) {
-              // Mock: fabricate a group. Real backend: just fetch whatever run-matching
-              // has already written for this user. Keep the type guard here because a
-              // release-like Supabase rehearsal must never mutate server state through
-              // a control that only exists to compress the three-day demo timeline.
-              final repo = state.repo;
-              if (repo is MockRepository) repo.formGroup();
-              await state.enterGroup();
-              return;
-            }
-            if (p == Phase.contacts) return state.loadContacts();
-            if (p is Phase) state.goTo(p);
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: Phase.onboarding, child: Text('1 - Signup')),
-            PopupMenuItem(value: Phase.home, child: Text('2 - Home')),
-            PopupMenuItem(value: Phase.waiting, child: Text('2 - Waiting')),
-            PopupMenuItem(
-              value: Phase.matched,
-              child: Text('3 - Group chat + vote'),
-            ),
-            PopupMenuItem(
-              value: Phase.after,
-              child: Text('4 - After the meetup'),
-            ),
-            PopupMenuItem(value: Phase.contacts, child: Text('5 - Numbers')),
-            PopupMenuDivider(),
-            PopupMenuItem(
-              value: 'noshow',
-              child: Text('Preview no-show message'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Fires the whole ladder compressed into ~40 seconds.
-///
-/// Demo infrastructure like [_DevJump]: the real ladder's first rung is three days before
-/// the event, so there is no way to show the notification system -- the part of this
-/// product that carries the story -- without compressing it. Gate on kDebugMode before
-/// this ships.
-class _DevLadder extends StatelessWidget {
-  final AppState state;
-  const _DevLadder(this.state);
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      right: 8,
-      bottom: 140,
-      child: SafeArea(
-        child: IconButton(
-          tooltip: 'Fire the ladder (compressed)',
-          icon: const CircleAvatar(
-            radius: 18,
-            backgroundColor: Colors.white12,
-            child: Icon(
-              Icons.notifications_active_outlined,
-              size: 18,
-              color: Colors.white54,
-            ),
-          ),
-          onPressed: () async {
-            final messenger = ScaffoldMessenger.maybeOf(context);
-            if (state.group == null) {
-              messenger?.showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Enter a group first — the ladder schedules from it.',
-                  ),
-                ),
-              );
-              return;
-            }
-            await state.armLadder(demo: true);
-            final pending = await NotificationService.instance.pending();
-            messenger?.showSnackBar(
-              SnackBar(
-                content: Text(
-                  state.notificationsEnabled == true
-                      ? '${pending.length} rungs armed — background the app to see them'
-                      : 'Notifications denied — enable them in Settings',
-                ),
-              ),
-            );
-          },
-        ),
       ),
     );
   }

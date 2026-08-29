@@ -18,16 +18,16 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.2"
           cache: true
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.6
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.116.0
 
       # The managed ClickPipe is executable infrastructure, not deployment prose. Validation in
       # the same product-contract job catches provider-schema drift before a production apply.
@@ -66,3 +66,29 @@ jobs:
       - name: Stop disposable Supabase
         if: always()
         run: supabase stop --no-backup
+
+  ios-release:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      COCOAPODS_DISABLE_STATS: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.2"
+          cache: true
+
+      - name: Resolve pinned Flutter dependencies
+        working-directory: app
+        run: flutter pub get
+
+      # Compile the physical-iPhone target on every PR. Placeholder public values exercise the
+      # production entrypoint without giving CI a hosted-project credential; no app process runs.
+      - name: Build unsigned iOS release artifact
+        working-directory: app
+        run: >-
+          flutter build ios --release --no-codesign --no-pub
+          --dart-define=SUPABASE_URL=https://ci.invalid
+          --dart-define=SUPABASE_ANON_KEY=ci-placeholder

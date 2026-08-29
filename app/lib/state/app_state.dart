@@ -16,7 +16,6 @@ class AppState extends ChangeNotifier {
   AppState(
     this.repo, {
     Phase initialPhase = Phase.onboarding,
-    this.referenceUiPreview = false,
     NotificationPermissionRequest? requestNotificationPermission,
     NotificationLadderSchedule? scheduleNotificationLadder,
   }) : _requestNotificationPermission =
@@ -34,12 +33,6 @@ class AppState extends ChangeNotifier {
   // it avoids replacing the repository or teaching the production notification service about tests.
   final NotificationPermissionRequest _requestNotificationPermission;
   final NotificationLadderSchedule _scheduleNotificationLadder;
-
-  /// The reference build deliberately models screens that do not yet have backend
-  /// contracts. Making preview eligibility constructor-owned keeps tests explicit and,
-  /// more importantly, prevents a restored Supabase session from drifting into static
-  /// sample data merely because Flutter happens to be running in debug mode.
-  final bool referenceUiPreview;
 
   Phase phase;
   Profile? me;
@@ -97,25 +90,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> completeOnboarding(Profile p) async {
     me = p;
-    if (referenceUiPreview) {
-      phase = Phase.home;
-    } else {
-      // Profile completion is durable, but matching is server-owned. Reading the
-      // repository immediately avoids both invented client-side matches and a brief
-      // trip through the static reference shell before the waiting/chat destination.
-      await _loadProductPhase();
-    }
-    notifyListeners();
-  }
-
-  /// The approved mock permits skipping onboarding. This changes only presentation state;
-  /// it deliberately does not create a fake backend profile or smuggle placeholder data
-  /// through the repository contract.
-  void skipOnboarding() {
-    // Only the approved preview has somewhere legitimate to skip to. In every other
-    // configuration the waiting screen is the safest non-fabricated destination; the
-    // real onboarding UI does not expose this control, so no backend profile is implied.
-    phase = referenceUiPreview ? Phase.home : Phase.waiting;
+    // Profile completion is durable, but matching is server-owned. Reading the repository
+    // immediately avoids both invented client-side matches and a trip through fixture UI.
+    await _loadProductPhase();
     notifyListeners();
   }
 
@@ -126,18 +103,22 @@ class AppState extends ChangeNotifier {
       phase = Phase.waiting;
       return;
     }
+    final lifecycle = await repo.experienceState(group!.id);
+    if (lifecycle == ExperienceState.completed ||
+        lifecycle == ExperienceState.cancelled) {
+      group = null;
+      assignment = null;
+      phase = Phase.waiting;
+      return;
+    }
     assignment = await repo.assignment(group!.id);
-    // event_at is the start, not the end. A two-hour grace period avoids asking someone to
-    // reflect while the meetup is still happening, and the completion row distinguishes a
-    // genuine "selected nobody" result from a person who has not seen this flow yet.
-    final reflectionIsDue = group!.eventAt
-        .add(const Duration(hours: 2))
-        .isBefore(DateTime.now());
-    final completed = reflectionIsDue
-        ? await repo.hasCompletedAfterFlow(group!.id)
-        : false;
-    phase = reflectionIsDue && !completed ? Phase.after : Phase.matched;
-    if (!reflectionIsDue) _armLadderOnce();
+    phase = switch (lifecycle) {
+      ExperienceState.preMeetup => Phase.matched,
+      ExperienceState.during => Phase.during,
+      ExperienceState.after => Phase.after,
+      ExperienceState.completed || ExperienceState.cancelled => Phase.waiting,
+    };
+    if (lifecycle == ExperienceState.preMeetup) _armLadderOnce();
   }
 
   /// Group formation and the chat opening are the same event -- there is no lobby.
@@ -147,6 +128,20 @@ class AppState extends ChangeNotifier {
     // the server-backed after-flow completion check used during cold restoration. One resolver
     // must own both paths so elapsed wall time cannot create two different product histories.
     await _loadProductPhase();
+    notifyListeners();
+  }
+
+  /// Revokes the durable membership before clearing local state. If the server write fails the
+  /// room stays visible with an error at the call site; pretending to leave locally would keep
+  /// receiving private messages and photos while telling the person they were safe.
+  Future<void> leaveCurrentGroup() async {
+    final current = group;
+    if (current == null) return;
+    await repo.leaveGroup(current.id);
+    group = null;
+    assignment = null;
+    contacts = const [];
+    phase = Phase.waiting;
     notifyListeners();
   }
 
@@ -181,7 +176,6 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    await repo.track('notif_sent', groupId: group!.id, props: {'demo': demo});
     notifyListeners();
   }
 
@@ -243,8 +237,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void goTo(Phase p) {
-    phase = p;
+  /// Leave the completed recap at its durable endpoint. Returning to `matched` here would create a
+  /// second client-only route into a lifecycle the server already marks completed.
+  void finishCurrentExperience() {
+    group = null;
+    assignment = null;
+    contacts = const [];
+    phase = Phase.waiting;
     notifyListeners();
   }
 

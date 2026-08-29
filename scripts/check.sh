@@ -71,6 +71,20 @@ done
 rg -q '<uses-permission android:name="android.permission.INTERNET"' \
   app/android/app/src/main/AndroidManifest.xml
 
+# Production composition must stay structurally incapable of constructing fixtures. A runtime
+# boolean is not a release boundary: one stale CI define can otherwise ship a convincing fake room.
+if rg -n 'mock_repository|features/product|reference_app|main_reference' \
+    app/lib/main.dart app/lib/app.dart; then
+  echo 'production entrypoint/router imports reference-only code'
+  exit 1
+fi
+if rg -n 'USE_SUPABASE|SHOW_REFERENCE_UI|SHOW_DEMO_CONTROLS' \
+    app/lib/main.dart app/lib/app.dart scripts/run_device.sh; then
+  echo 'production composition regained a runtime fixture/demo selector'
+  exit 1
+fi
+rg -q "import 'reference_app.dart';" app/lib/main_reference.dart
+
 echo "→ ClickPipes infrastructure contract"
 command -v terraform >/dev/null || { echo "terraform is required"; exit 1; }
 terraform -chdir=infra/clickhouse-cdc fmt -check

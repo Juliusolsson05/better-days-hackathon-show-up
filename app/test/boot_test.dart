@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:showup/app.dart';
+import 'package:showup/data/mock_repository.dart';
+import 'package:showup/models/models.dart';
 
 void main() {
   testWidgets('boots at iPhone size without throwing', (tester) async {
@@ -10,15 +12,19 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    // Supabase is now the safe default for every real launch. Widget tests do not execute main()
-    // (and therefore cannot initialize its SDK), so fixture mode must be requested explicitly.
-    await tester.pumpWidget(const ShowUpApp(useMockRepositoryForTesting: true));
+    final repository = MockRepository();
+    addTearDown(repository.dispose);
+    await tester.pumpWidget(
+      ShowUpApp(
+        repository: repository,
+        initialPhase: Phase.onboarding,
+        restoreSession: false,
+      ),
+    );
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
     expect(tester.takeException(), isNull);
-    // The approved reference has no Material app bar; its first display line is the stable boot
-    // landmark. Protecting that copy also prevents the legacy single-page form from returning.
     expect(
       find.text('A table of four to six people who all came alone.'),
       findsOneWidget,

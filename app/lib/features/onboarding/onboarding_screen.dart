@@ -13,364 +13,23 @@ typedef PhotoPicker = Future<XFile?> Function();
 /// input, the photo is what makes the group feel like people rather than names.
 class OnboardingScreen extends StatefulWidget {
   final AppState state;
-  const OnboardingScreen(this.state, {super.key, this.pickPhoto});
+  const OnboardingScreen(
+    this.state, {
+    super.key,
+    this.pickPhoto,
+    this.onComplete,
+  });
 
   /// The platform picker is injected only by widget tests. Keeping the seam at the OS boundary
   /// lets tests exercise the approved photo step without weakening its required-photo contract.
   final PhotoPicker? pickPhoto;
+  final VoidCallback? onComplete;
 
   @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
+  State<OnboardingScreen> createState() => _OnboardingFlowState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const _interests = [
-    'climbing',
-    'music',
-    'photography',
-    'baking',
-    'chess',
-    'running',
-    'anime',
-    'gardening',
-    'board games',
-    'cycling',
-    'pottery',
-    'birding',
-  ];
-  static const _avatars = ['🧗', '🎧', '📷', '🍞', '♟️', '🏃', '🌱', '🎨'];
-  static const _slots = ['fri_eve', 'sat_day', 'sat_eve', 'sun_day'];
-
-  final _name = TextEditingController();
-  final _phone = TextEditingController();
-  final _passion = TextEditingController();
-  final _customTag = TextEditingController();
-  final _picked = <String>{};
-  // PRD: pick from the fixed set "plus write your own (pokemon, anime, whatever)".
-  final _extraTags = <String>[];
-  final _avail = <String>{'fri_eve'};
-  String _avatar = '🧗';
-  XFile? _photo;
-  bool _busy = false;
-
-  String? get _normalizedPhone => normalizeSfPhone(_phone.text);
-
-  // Photo and phone are not decoration: the former makes the matched group feel like people,
-  // and the latter is the endpoint of mutual contact exchange. Letting either be absent creates
-  // a profile that can enter matching but cannot complete the product loop.
-  bool get _valid =>
-      _name.text.trim().isNotEmpty &&
-      _passion.text.trim().length > 10 &&
-      _picked.isNotEmpty &&
-      _avail.isNotEmpty &&
-      _photo != null &&
-      _normalizedPhone != null;
-
-  static const _maxExtraTags = 8;
-
-  Future<void> _pickPhoto() async {
-    if (_busy) return;
-    try {
-      final picked = widget.pickPhoto != null
-          ? await widget.pickPhoto!()
-          : await ImagePicker().pickImage(
-              source: ImageSource.gallery,
-              maxWidth: 1200,
-              imageQuality: 82,
-            );
-      if (picked != null && mounted) {
-        setState(() => _photo = picked);
-      }
-    } catch (_) {
-      // Permission denied, or the picker channel threw. Nothing actionable to show
-      // beyond letting them try again.
-      if (mounted) {
-        _toast('Could not open your photos. Check the app permission.');
-      }
-    }
-  }
-
-  void _addCustomTag() {
-    // Collapse whitespace, drop a leading '#', cap the length so one tag can't blow out
-    // the chip row.
-    final tag = _customTag.text
-        .trim()
-        .toLowerCase()
-        .replaceFirst(RegExp(r'^#+'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    if (tag.isEmpty) return;
-    if (_picked.contains(tag)) {
-      _customTag.clear();
-      return;
-    }
-    if (_extraTags.length >= _maxExtraTags) {
-      _toast('That is plenty of interests to match on.');
-      return;
-    }
-    setState(() {
-      final known = _interests.contains(tag) || _extraTags.contains(tag);
-      if (!known) {
-        _extraTags.add(tag.length > 24 ? tag.substring(0, 24) : tag);
-      }
-      _picked.add(known ? tag : _extraTags.last);
-      _customTag.clear();
-    });
-  }
-
-  Future<void> _submit() async {
-    setState(() => _busy = true);
-    try {
-      final p = await widget.state.repo.submitProfile(
-        displayName: _name.text.trim(),
-        avatar: _avatar,
-        passion: _passion.text.trim(),
-        tags: _picked.toList(),
-        city: 'SF',
-        availability: _avail.toList(),
-        phone: _normalizedPhone!,
-        photoPath: _photo?.path,
-      );
-      await widget.state.completeOnboarding(p);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      final offline =
-          e.toString().toLowerCase().contains('socket') ||
-          e.toString().toLowerCase().contains('clientexception');
-      _toast(
-        offline
-            ? "Couldn't reach the server. Check your connection and try again."
-            : "Couldn't create your profile. Give it another go.",
-      );
-    }
-  }
-
-  void _toast(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _phone.dispose();
-    _passion.dispose();
-    _customTag.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // The approved mock is intentionally available only in the gated reference build. Its three
-    // steps do not collect the private phone and matching prose required by the live Supabase
-    // contract, so silently using it in production would trade visual parity for invalid profiles.
-    // Keeping both presentations at this boundary makes the preview exact without weakening the
-    // backend-capable flow while those missing fields await an approved product design.
-    if (widget.state.referenceUiPreview) {
-      return _ReferenceOnboarding(widget.state, pickPhoto: widget.pickPhoto);
-    }
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Show Up')),
-      body: ListView(
-        // Scrolling away from a field should close its keyboard.
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 48),
-        children: [
-          const ScreenIntro(
-            'You go alone.\nSo does everyone else.',
-            'Four to six people, matched on what you are into.',
-          ),
-          const SizedBox(height: 32),
-
-          const _Label('What should people call you?'),
-          TextField(
-            controller: _name,
-            onChanged: (_) => setState(() {}),
-            maxLength: 40,
-            textCapitalization: TextCapitalization.words,
-            textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(
-              hintText: 'First name',
-              counterText: '',
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          const _Label('Your phone number'),
-          Text(
-            'Only people you choose who also choose you will ever see it.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _phone,
-            onChanged: (_) => setState(() {}),
-            keyboardType: TextInputType.phone,
-            autofillHints: const [AutofillHints.telephoneNumber],
-            decoration: const InputDecoration(hintText: '(415) 555-0123'),
-          ),
-          const SizedBox(height: 24),
-
-          const _Label('Add a photo'),
-          Text(
-            'A clear photo of you — this is how the group recognizes each other.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 10),
-          Semantics(
-            button: true,
-            label: _photo == null ? 'Add a photo' : 'Change photo',
-            child: GestureDetector(
-              onTap: _pickPhoto,
-              child: Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: surface,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _photo == null ? ink : positive,
-                    width: 2,
-                  ),
-                  image: _photo == null
-                      ? null
-                      : DecorationImage(
-                          image: FileImage(File(_photo!.path)),
-                          fit: BoxFit.cover,
-                        ),
-                ),
-                child: _photo == null
-                    ? const Icon(Icons.add_a_photo_outlined, color: ink)
-                    : null,
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          const _Label('Pick a chat icon'),
-          Wrap(
-            spacing: 10,
-            children: [
-              for (final a in _avatars)
-                GestureDetector(
-                  onTap: () => setState(() => _avatar = a),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _avatar == a ? inkDeep : Colors.transparent,
-                        width: 2,
-                      ),
-                      color: _avatar == a ? accentPale : Colors.transparent,
-                    ),
-                    padding: const EdgeInsets.all(2),
-                    child: Avatar(a),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          const _Label('What are you into?'),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final i in [..._interests, ..._extraTags])
-                FilterChip(
-                  label: Text(i),
-                  selected: _picked.contains(i),
-                  onSelected: (v) =>
-                      setState(() => v ? _picked.add(i) : _picked.remove(i)),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _customTag,
-                  onSubmitted: (_) => _addCustomTag(),
-                  maxLength: 24,
-                  textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(
-                    hintText: 'Add your own: anime, pokemon, whatever',
-                    isDense: true,
-                    counterText: '',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(onPressed: _addCustomTag, icon: const Icon(Icons.add)),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // The free-text field is what the embedding is actually built from.
-          const _Label('What are you passionate about?'),
-          TextField(
-            controller: _passion,
-            maxLines: 4,
-            maxLength: 280,
-            onChanged: (_) => setState(() {}),
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              hintText:
-                  'The thing you would talk about all night if someone let you.',
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          const _Label('When are you free?'),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final s in _slots)
-                FilterChip(
-                  label: Text(s.replaceAll('_', ' ')),
-                  selected: _avail.contains(s),
-                  onSelected: (v) =>
-                      setState(() => v ? _avail.add(s) : _avail.remove(s)),
-                ),
-            ],
-          ),
-          const SizedBox(height: 32),
-
-          FilledButton(
-            onPressed: _valid && !_busy ? _submit : null,
-            child: _busy
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: ink,
-                    ),
-                  )
-                : const Text('Find me a group'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReferenceOnboarding extends StatefulWidget {
-  const _ReferenceOnboarding(this.state, {this.pickPhoto});
-
-  final AppState state;
-  final PhotoPicker? pickPhoto;
-
-  @override
-  State<_ReferenceOnboarding> createState() => _ReferenceOnboardingState();
-}
-
-class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
+class _OnboardingFlowState extends State<OnboardingScreen> {
   static const _interests = <({String id, String label, String emoji})>[
     (id: 'slow-coffee', label: 'Slow coffee', emoji: '☕'),
     (id: 'live-music', label: 'Live music', emoji: '🎻'),
@@ -387,17 +46,24 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
   ];
 
   var _step = 0;
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
   final _picked = <String>{};
   final _customInterests = <String>[];
   final _customInterest = TextEditingController();
   final _about = TextEditingController();
+  final _availability = <String>{'fri_eve'};
   XFile? _photo;
   var _busy = false;
 
   bool get _canContinue => switch (_step) {
     0 => true,
-    1 => _picked.length >= 2,
-    _ => _photo != null && _about.text.trim().length > 10,
+    1 => _name.text.trim().isNotEmpty && normalizeSfPhone(_phone.text) != null,
+    2 => _picked.length >= 2,
+    _ =>
+      _photo != null &&
+          _about.text.trim().length > 10 &&
+          _availability.isNotEmpty,
   };
 
   void _addCustomInterest() {
@@ -478,29 +144,28 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
   Future<void> _continue() async {
     if (!_canContinue || _busy) return;
-    if (_step < 2) {
+    if (_step < 3) {
       setState(() => _step += 1);
       return;
     }
 
     setState(() => _busy = true);
     try {
-      // The reference shell is backed exclusively by MockRepository. It still receives a real
-      // Profile so the rest of AppState observes the same completion boundary as production.
-      // Only identity/contact/availability remain mock placeholders; interests, free-form matching
-      // prose, and the photo are genuine user inputs because losing any of those would make the
-      // reference UX demonstrate a different matching product.
       final profile = await widget.state.repo.submitProfile(
-        displayName: 'You',
+        displayName: _name.text.trim(),
         avatar: '🙂',
         passion: _about.text.trim(),
         tags: _picked.toList(growable: false),
         city: 'SF',
-        availability: const ['fri_eve'],
-        phone: '+14155550123',
+        availability: _availability.toList(growable: false),
+        phone: normalizeSfPhone(_phone.text)!,
         photoPath: _photo!.path,
       );
-      await widget.state.completeOnboarding(profile);
+      if (widget.onComplete case final onComplete?) {
+        onComplete();
+      } else {
+        await widget.state.completeOnboarding(profile);
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -516,6 +181,8 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
   @override
   void dispose() {
+    _name.dispose();
+    _phone.dispose();
     _customInterest.dispose();
     _about.dispose();
     super.dispose();
@@ -530,7 +197,7 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
           children: [
             Row(
               children: [
-                for (var i = 0; i < 3; i++) ...[
+                for (var i = 0; i < 4; i++) ...[
                   if (i > 0) const SizedBox(width: 6),
                   Expanded(
                     child: AnimatedContainer(
@@ -562,8 +229,13 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                 child: KeyedSubtree(
                   key: ValueKey(_step),
                   child: switch (_step) {
-                    0 => const _ReferenceWelcomeStep(),
-                    1 => _ReferenceInterestsStep(
+                    0 => const _WelcomeStep(),
+                    1 => _IdentityStep(
+                      nameController: _name,
+                      phoneController: _phone,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    2 => _InterestsStep(
                       picked: _picked,
                       customInterests: _customInterests,
                       customInterestController: _customInterest,
@@ -574,39 +246,29 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                             : _picked.add(id),
                       ),
                     ),
-                    _ => _ReferencePhotoStep(
+                    _ => _PhotoStep(
                       photo: _photo,
                       aboutController: _about,
                       onAboutChanged: (_) => setState(() {}),
                       onPick: _pickPhoto,
                       onClear: () => setState(() => _photo = null),
+                      availability: _availability,
+                      onToggleAvailability: (slot) => setState(
+                        () => _availability.contains(slot)
+                            ? _availability.remove(slot)
+                            : _availability.add(slot),
+                      ),
                     ),
                   },
                 ),
               ),
             ),
             const SizedBox(height: 24),
-            _ReferencePrimaryButton(
-              label: _step == 2 ? 'Find my table' : 'Continue',
+            _PrimaryButton(
+              label: _step == 3 ? 'Find my table' : 'Continue',
               enabled: _canContinue && !_busy,
               busy: _busy,
               onPressed: _continue,
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _busy ? null : widget.state.skipOnboarding,
-              style: TextButton.styleFrom(
-                foregroundColor: mutedInk,
-                minimumSize: const Size.fromHeight(32),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.underline,
-                  decorationColor: mutedInk,
-                ),
-              ),
-              child: const Text('Skip onboarding'),
             ),
           ],
         ),
@@ -615,8 +277,8 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
   );
 }
 
-class _ReferenceWelcomeStep extends StatelessWidget {
-  const _ReferenceWelcomeStep();
+class _WelcomeStep extends StatelessWidget {
+  const _WelcomeStep();
 
   @override
   Widget build(BuildContext context) => const Padding(
@@ -637,20 +299,75 @@ class _ReferenceWelcomeStep extends StatelessWidget {
         SizedBox(height: 12),
         Text(
           'A table of four to six people who all came alone.',
-          style: _referenceWelcomeTitle,
+          style: _welcomeTitle,
         ),
         SizedBox(height: 12),
         Text(
           "No plus-ones, no odd one out. You'll get one lighthearted question to ask one person, so there's nothing to figure out when you arrive.",
-          style: _referenceBody,
+          style: _body,
         ),
       ],
     ),
   );
 }
 
-class _ReferenceInterestsStep extends StatelessWidget {
-  const _ReferenceInterestsStep({
+class _IdentityStep extends StatelessWidget {
+  const _IdentityStep({
+    required this.nameController,
+    required this.phoneController,
+    required this.onChanged,
+  });
+
+  final TextEditingController nameController;
+  final TextEditingController phoneController;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    padding: const EdgeInsets.only(top: 32),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('A little about you', style: _stepTitle),
+        const SizedBox(height: 8),
+        const Text(
+          'Your first name is visible to your group. Your number stays private unless you and someone else both choose to share after the meetup.',
+          style: TextStyle(color: bodyInk, fontSize: 13, height: 1.4),
+        ),
+        const SizedBox(height: 24),
+        TextField(
+          key: const Key('display-name-input'),
+          controller: nameController,
+          onChanged: onChanged,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.givenName],
+          decoration: const InputDecoration(
+            labelText: 'First name',
+            counterText: '',
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('phone-input'),
+          controller: phoneController,
+          onChanged: onChanged,
+          keyboardType: TextInputType.phone,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          decoration: const InputDecoration(
+            labelText: 'Phone number',
+            hintText: '(415) 555-0123',
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _InterestsStep extends StatelessWidget {
+  const _InterestsStep({
     required this.picked,
     required this.customInterests,
     required this.customInterestController,
@@ -670,10 +387,7 @@ class _ReferenceInterestsStep extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'What would you actually show up for?',
-          style: _referenceStepTitle,
-        ),
+        const Text('What would you actually show up for?', style: _stepTitle),
         const SizedBox(height: 8),
         const Text(
           'Pick at least two. This is how we match your table.',
@@ -690,15 +404,15 @@ class _ReferenceInterestsStep extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final interest in _ReferenceOnboardingState._interests)
-                      _ReferenceInterestChip(
+                    for (final interest in _OnboardingFlowState._interests)
+                      _InterestChip(
                         emoji: interest.emoji,
                         label: interest.label,
                         selected: picked.contains(interest.id),
                         onTap: () => onToggle(interest.id),
                       ),
                     for (final interest in customInterests)
-                      _ReferenceInterestChip(
+                      _InterestChip(
                         emoji: '✦',
                         label: interest,
                         selected: picked.contains(interest.toLowerCase()),
@@ -754,8 +468,8 @@ class _ReferenceInterestsStep extends StatelessWidget {
   );
 }
 
-class _ReferenceInterestChip extends StatelessWidget {
-  const _ReferenceInterestChip({
+class _InterestChip extends StatelessWidget {
+  const _InterestChip({
     required this.emoji,
     required this.label,
     required this.selected,
@@ -804,13 +518,15 @@ class _ReferenceInterestChip extends StatelessWidget {
   );
 }
 
-class _ReferencePhotoStep extends StatelessWidget {
-  const _ReferencePhotoStep({
+class _PhotoStep extends StatelessWidget {
+  const _PhotoStep({
     required this.photo,
     required this.aboutController,
     required this.onAboutChanged,
     required this.onPick,
     required this.onClear,
+    required this.availability,
+    required this.onToggleAvailability,
   });
 
   final XFile? photo;
@@ -818,6 +534,8 @@ class _ReferencePhotoStep extends StatelessWidget {
   final ValueChanged<String> onAboutChanged;
   final VoidCallback onPick;
   final VoidCallback onClear;
+  final Set<String> availability;
+  final ValueChanged<String> onToggleAvailability;
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
@@ -826,7 +544,7 @@ class _ReferencePhotoStep extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Add a photo', style: _referenceStepTitle),
+        const Text('Add a photo', style: _stepTitle),
         const SizedBox(height: 8),
         const Text(
           "It's what makes your group feel like people instead of names. Required, and only your group sees it.",
@@ -918,13 +636,40 @@ class _ReferencePhotoStep extends StatelessWidget {
             alignLabelWithHint: true,
           ),
         ),
+        const SizedBox(height: 18),
+        const Text(
+          'When are you usually free?',
+          style: TextStyle(
+            color: ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final slot in const <(String, String)>[
+              ('fri_eve', 'Friday evening'),
+              ('sat_day', 'Saturday daytime'),
+              ('sat_eve', 'Saturday evening'),
+              ('sun_day', 'Sunday daytime'),
+            ])
+              FilterChip(
+                label: Text(slot.$2),
+                selected: availability.contains(slot.$1),
+                onSelected: (_) => onToggleAvailability(slot.$1),
+              ),
+          ],
+        ),
       ],
     ),
   );
 }
 
-class _ReferencePrimaryButton extends StatelessWidget {
-  const _ReferencePrimaryButton({
+class _PrimaryButton extends StatelessWidget {
+  const _PrimaryButton({
     required this.label,
     required this.enabled,
     required this.busy,
@@ -972,7 +717,7 @@ class _ReferencePrimaryButton extends StatelessWidget {
   );
 }
 
-const _referenceWelcomeTitle = TextStyle(
+const _welcomeTitle = TextStyle(
   fontFamily: 'Georgia',
   color: ink,
   fontSize: 30,
@@ -981,7 +726,7 @@ const _referenceWelcomeTitle = TextStyle(
   letterSpacing: -.25,
 );
 
-const _referenceStepTitle = TextStyle(
+const _stepTitle = TextStyle(
   fontFamily: 'Georgia',
   color: ink,
   fontSize: 24,
@@ -990,14 +735,4 @@ const _referenceStepTitle = TextStyle(
   letterSpacing: -.2,
 );
 
-const _referenceBody = TextStyle(color: bodyInk, fontSize: 14, height: 1.62);
-
-class _Label extends StatelessWidget {
-  final String text;
-  const _Label(this.text);
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(text, style: Theme.of(context).textTheme.titleMedium),
-  );
-}
+const _body = TextStyle(color: bodyInk, fontSize: 14, height: 1.62);

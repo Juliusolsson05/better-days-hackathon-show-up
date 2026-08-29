@@ -91,3 +91,18 @@ export function haveOpposingStances(left: string[], right: string[]): boolean {
   const blocked = new Set(opposingStances(left));
   return normalizeStanceTags(right).some((tag) => blocked.has(tag));
 }
+
+/// One canonical key represents a block in either direction. The decision remains one-way and
+/// private in Postgres, but matching must exclude the pair symmetrically: neither participant
+/// should be able to infer who acted from whether they become the seed or candidate.
+export function blockedPairKey(left: string, right: string): string {
+  return left < right ? `${left}:${right}` : `${right}:${left}`;
+}
+
+export function haveBlockedRelationship(
+  blockedPairs: ReadonlySet<string>,
+  left: string,
+  right: string,
+): boolean {
+  return blockedPairs.has(blockedPairKey(left, right));
+}

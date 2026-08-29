@@ -10,6 +10,7 @@ import '../../state/app_state.dart';
 import 'group_info_screen.dart';
 import 'no_show_sheet.dart';
 import 'question_sheet.dart';
+import 'safety_actions.dart';
 import 'venue_vote_card.dart';
 
 /// The product surface. Group formation and the chat opening are the same event, so this
@@ -366,20 +367,30 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 // Sending is dimmed rather than badged because it is the common, brief state.
                 // Failure is the state worth interrupting for: a silent drop can feel exactly
                 // like being ignored, which is especially damaging for this product's premise.
-                Opacity(
-                  opacity: message.status == MessageStatus.sending ? 0.55 : 1,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: message.isMine ? accent : surface,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      message.body,
-                      style: const TextStyle(height: 1.35, color: ink),
+                GestureDetector(
+                  onLongPress: message.isMine
+                      ? null
+                      : () => showMemberSafetyActions(
+                          context,
+                          widget.state,
+                          memberId: message.authorId,
+                          memberName: message.authorName,
+                        ),
+                  child: Opacity(
+                    opacity: message.status == MessageStatus.sending ? 0.55 : 1,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: message.isMine ? accent : surface,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        message.body,
+                        style: const TextStyle(height: 1.35, color: ink),
+                      ),
                     ),
                   ),
                 ),

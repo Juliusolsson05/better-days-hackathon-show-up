@@ -57,6 +57,18 @@ abstract class Repository {
   /// no-op rather than a duplicate. A plain re-send could not tell those cases apart.
   Future<void> retryMessage(String groupId, Message failed);
 
+  /// Safety writes are private, server-authorized actions. Reporting never notifies the subject;
+  /// blocking excludes the pair from future matching in either direction; leaving revokes this
+  /// caller's room, roster, photo, and history access immediately.
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  });
+  Future<void> blockUser(String blockedUserId);
+  Future<void> leaveGroup(String groupId);
+
   /// Voting is anonymous: you can read your own ballot and the tally, never who voted.
   Future<void> castVenueVote(String groupId, String optionId);
   Future<String?> myVenueVote(String groupId);

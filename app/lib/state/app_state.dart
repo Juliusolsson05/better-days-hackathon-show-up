@@ -127,6 +127,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Revokes the durable membership before clearing local state. If the server write fails the
+  /// room stays visible with an error at the call site; pretending to leave locally would keep
+  /// receiving private messages and photos while telling the person they were safe.
+  Future<void> leaveCurrentGroup() async {
+    final current = group;
+    if (current == null) return;
+    await repo.leaveGroup(current.id);
+    group = null;
+    assignment = null;
+    contacts = const [];
+    phase = Phase.waiting;
+    notifyListeners();
+  }
+
   void _armLadderOnce() {
     final groupId = group?.id;
     if (groupId == null || !_automaticLadderAttempts.add(groupId)) return;

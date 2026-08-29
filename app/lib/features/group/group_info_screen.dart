@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../state/app_state.dart';
+import 'safety_actions.dart';
 import 'venue_map.dart';
 
 /// Reached by tapping the group name, the way WhatsApp group info works. Members and
@@ -134,6 +135,12 @@ class GroupInfoScreen extends StatelessWidget {
                   label: const Text('View mutual contacts'),
                 ),
               ],
+              const SizedBox(height: 20),
+              TextButton.icon(
+                onPressed: () => confirmLeaveGroup(context, state),
+                icon: const Icon(Icons.exit_to_app),
+                label: const Text('Leave group'),
+              ),
               const SizedBox(height: 32),
             ],
           ),
@@ -151,20 +158,33 @@ class GroupInfoScreen extends StatelessWidget {
         // member's identity or requiring group info to understand storage refresh policy.
         Avatar(member.avatar, imageUrl: member.photoUrl),
         const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              member.displayName,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            if (member.tags.isNotEmpty)
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                member.tags.join(', '),
-                style: Theme.of(context).textTheme.bodySmall,
+                member.displayName,
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-          ],
+              if (member.tags.isNotEmpty)
+                Text(
+                  member.tags.join(', '),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+            ],
+          ),
         ),
+        if (member.id != 'me')
+          IconButton(
+            tooltip: 'Safety options for ${member.displayName}',
+            icon: const Icon(Icons.more_horiz),
+            onPressed: () => showMemberSafetyActions(
+              context,
+              state,
+              memberId: member.id,
+              memberName: member.displayName,
+            ),
+          ),
       ],
     ),
   );

@@ -241,6 +241,23 @@ class MockRepository implements Repository {
   @override
   Future<void> retryMessage(String groupId, Message failed) async {}
 
+  @override
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  }) => Future.delayed(_lag);
+
+  @override
+  Future<void> blockUser(String blockedUserId) => Future.delayed(_lag);
+
+  @override
+  Future<void> leaveGroup(String groupId) async {
+    await Future.delayed(_lag);
+    _group = null;
+  }
+
   void _emit() => _controller.add(List.unmodifiable(_messages));
 
   /// Someone replies a few seconds after the group opens, so the chat is visibly live.

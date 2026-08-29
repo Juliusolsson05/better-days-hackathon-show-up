@@ -7,7 +7,12 @@ import { createClient } from "npm:@supabase/supabase-js@2.47.10";
 import { arr, ch, emit } from "../_shared/clickhouse.ts";
 import { planGroup } from "../_shared/claude.ts";
 import { openChat } from "../_shared/chat.ts";
-import { haveOpposingStances, opposingStances } from "../_shared/matching.ts";
+import {
+  blockedPairKey,
+  haveBlockedRelationship,
+  haveOpposingStances,
+  opposingStances,
+} from "../_shared/matching.ts";
 import { nextSlot } from "../_shared/schedule.ts";
 
 // PRD says 4 to 6. We aim for MAX and accept anything at or above MIN rather than
@@ -121,6 +126,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Blocks are one-way private decisions, but exclusion is symmetric. Load only relationships
+    // whose two participants are in this eligible pool; the pair set then keeps the hot candidate
+    // loop local and avoids revealing block state to ClickHouse or the model prompt.
+    const poolIds = pool.map((profile) => profile.id);
+    const { data: blockedRows, error: blockedErr } = await db.from(
+      "blocked_users",
+    )
+      .select("blocker_id,blocked_id")
+      .in("blocker_id", poolIds)
+      .in("blocked_id", poolIds);
+    if (blockedErr) throw blockedErr;
+    const blockedPairs = new Set(
+      (blockedRows ?? []).map((row) =>
+        blockedPairKey(row.blocker_id, row.blocked_id)
+      ),
+    );
+
     // A restarted sweep must not form a second arrangement from people committed before the
     // crash. The RPC is the final race-proof authority; this filter keeps ordinary retries from
     // wasting Claude calls only to discover the same-run membership constraint at write time.
@@ -222,6 +244,11 @@ Deno.serve(async (req) => {
           if (!unassigned.has(cand.user_id) || picked.includes(cand.user_id)) {
             continue;
           }
+          if (
+            picked.some((memberId) =>
+              haveBlockedRelationship(blockedPairs, memberId, cand.user_id)
+            )
+          ) continue;
           // NOT hasAny is intentionally retained above as the cheap seed/candidate path for
           // canonical rows. This guard is still authoritative: it handles legacy/free-form
           // spellings and checks every person already picked, not merely the seed. Otherwise

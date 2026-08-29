@@ -151,7 +151,9 @@ class SupabaseRepository implements Repository {
     // below does not serialize the network round trips.
     final groupFuture = _client
         .from('groups')
-        .select('id,event_at,venue,activity,chosen_venue_id,venue_status')
+        .select(
+          'id,event_at,venue,activity,chosen_venue_id,venue_status,needs_repair',
+        )
         .eq('id', groupId)
         .single();
     final memberRowsFuture = _client
@@ -170,6 +172,11 @@ class SupabaseRepository implements Repository {
     final groupRow = await groupFuture;
     final memberRows = await memberRowsFuture;
     final venueRows = await venueRowsFuture;
+
+    // A departure can invalidate the assignment derangement and minimum headcount. Hiding the
+    // room from remaining members is safer than presenting a chat whose roster/question contracts
+    // are no longer true; operations can repair the group and clear this server-owned flag.
+    if (groupRow['needs_repair'] == true) return null;
 
     final members = await Future.wait(
       memberRows.map((row) async {
@@ -384,6 +391,32 @@ class SupabaseRepository implements Repository {
     }
     _repaint[groupId]?.call();
   }
+
+  @override
+  Future<void> reportUser({
+    required String groupId,
+    required String reportedUserId,
+    required String reason,
+    String? details,
+  }) async {
+    await _client.rpc<dynamic>(
+      'report_user',
+      params: {
+        'grp': groupId,
+        'reported': reportedUserId,
+        'report_reason': reason,
+        'report_details': details,
+      },
+    );
+  }
+
+  @override
+  Future<void> blockUser(String blockedUserId) =>
+      _client.rpc<void>('block_user', params: {'blocked': blockedUserId});
+
+  @override
+  Future<void> leaveGroup(String groupId) =>
+      _client.rpc<void>('leave_group', params: {'grp': groupId});
 
   Future<void> _insertUserMessage(
     String groupId,

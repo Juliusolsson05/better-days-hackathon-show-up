@@ -24,6 +24,8 @@ class SupabaseRepository implements Repository {
   // human-facing name/photo, and this cache avoids joining profiles into a realtime stream (the
   // stream API intentionally returns table rows, not embedded PostgREST relations).
   Map<String, Member> _membersByUserId = const {};
+  String? _experienceGroupId;
+  ExperienceState? _experienceState;
 
   GoTrueClient get _auth => _client.auth;
 
@@ -136,16 +138,23 @@ class SupabaseRepository implements Repository {
   @override
   Future<Group?> currentGroup() async {
     final uid = _userId;
-    final membership = await _client
-        .from('group_members')
-        .select('group_id')
-        .eq('user_id', uid)
-        .order('joined_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    if (membership == null) return null;
-
-    final groupId = membership['group_id'] as String;
+    final rows = await _client.rpc<List<dynamic>>('current_experience');
+    if (rows.isEmpty) {
+      _experienceGroupId = null;
+      _experienceState = null;
+      return null;
+    }
+    final experience = Map<String, dynamic>.from(rows.single as Map);
+    final groupId = experience['group_id'] as String;
+    final lifecycle = _decodeExperienceState(
+      experience['lifecycle_state'] as String,
+    );
+    _experienceGroupId = groupId;
+    _experienceState = lifecycle;
+    if (lifecycle == ExperienceState.completed ||
+        lifecycle == ExperienceState.cancelled) {
+      return null;
+    }
 
     // Start the three independent reads together. `Future`s are eager in Dart, so awaiting them
     // below does not serialize the network round trips.
@@ -220,6 +229,20 @@ class SupabaseRepository implements Repository {
       chosenVenueId: nullableString(groupRow['chosen_venue_id']),
       venueStatus: venueStatus,
     );
+  }
+
+  @override
+  Future<ExperienceState> experienceState(String groupId) async {
+    if (_experienceGroupId == groupId && _experienceState != null) {
+      return _experienceState!;
+    }
+    // currentGroup owns the RPC and its group projection. Reusing it here keeps one server answer
+    // for restoration instead of racing two lifecycle reads across a deadline boundary.
+    await currentGroup();
+    if (_experienceGroupId != groupId || _experienceState == null) {
+      return ExperienceState.cancelled;
+    }
+    return _experienceState!;
   }
 
   @override
@@ -712,6 +735,15 @@ Map<String, dynamic> messageSubmissionParams({
   required String clientMsgId,
   required String body,
 }) => {'grp': groupId, 'client_id': clientMsgId, 'message_body': body};
+
+ExperienceState _decodeExperienceState(String value) => switch (value) {
+  'pre_meetup' => ExperienceState.preMeetup,
+  'during' => ExperienceState.during,
+  'after' => ExperienceState.after,
+  'completed' => ExperienceState.completed,
+  'cancelled' => ExperienceState.cancelled,
+  _ => throw FormatException('Unknown experience state: $value'),
+};
 
 /// RFC 4122 version 4, from the platform CSPRNG.
 ///

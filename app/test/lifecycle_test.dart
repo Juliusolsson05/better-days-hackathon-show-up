@@ -52,6 +52,10 @@ class _OtpRepository extends MockRepository {
     targetName: 'Tom',
     question: 'What made you care about this?',
   );
+
+  @override
+  Future<ExperienceState> experienceState(String groupId) async =>
+      ExperienceState.preMeetup;
 }
 
 Group _futureGroup() => Group(
@@ -95,7 +99,7 @@ void main() {
 
       final nextLaunch = AppState(repo);
       await nextLaunch.restore();
-      expect(nextLaunch.phase, Phase.matched);
+      expect(nextLaunch.phase, Phase.waiting);
     },
   );
 
@@ -123,13 +127,13 @@ void main() {
       await repo.selectContacts('past-group', const {});
       final state = AppState(repo);
       await state.restore();
-      expect(state.phase, Phase.matched);
+      expect(state.phase, Phase.waiting);
 
       await state.handleNotificationTap(
         const NotificationTap('past-group', Rung.reflect),
       );
 
-      expect(state.phase, Phase.matched);
+      expect(state.phase, Phase.waiting);
     },
   );
 

@@ -22,7 +22,11 @@ Future<AppState> _formedState(
   final entering = state.enterGroup();
   // Mock latency uses timers on purpose. Widget tests own a fake clock, so advance it while the
   // future is pending rather than awaiting a timer that cannot fire outside tester.pump().
-  await tester.pump(const Duration(seconds: 1));
+  // Lifecycle restoration now asks the mock for both its group projection and durable phase.
+  // Each read schedules the next only after its timer fires, so advance the fake clock in steps.
+  for (var i = 0; i < 4; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
   await entering;
   return state;
 }

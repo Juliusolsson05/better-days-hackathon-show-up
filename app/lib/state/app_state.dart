@@ -103,18 +103,22 @@ class AppState extends ChangeNotifier {
       phase = Phase.waiting;
       return;
     }
+    final lifecycle = await repo.experienceState(group!.id);
+    if (lifecycle == ExperienceState.completed ||
+        lifecycle == ExperienceState.cancelled) {
+      group = null;
+      assignment = null;
+      phase = Phase.waiting;
+      return;
+    }
     assignment = await repo.assignment(group!.id);
-    // event_at is the start, not the end. A two-hour grace period avoids asking someone to
-    // reflect while the meetup is still happening, and the completion row distinguishes a
-    // genuine "selected nobody" result from a person who has not seen this flow yet.
-    final reflectionIsDue = group!.eventAt
-        .add(const Duration(hours: 2))
-        .isBefore(DateTime.now());
-    final completed = reflectionIsDue
-        ? await repo.hasCompletedAfterFlow(group!.id)
-        : false;
-    phase = reflectionIsDue && !completed ? Phase.after : Phase.matched;
-    if (!reflectionIsDue) _armLadderOnce();
+    phase = switch (lifecycle) {
+      ExperienceState.preMeetup => Phase.matched,
+      ExperienceState.during => Phase.during,
+      ExperienceState.after => Phase.after,
+      ExperienceState.completed || ExperienceState.cancelled => Phase.waiting,
+    };
+    if (lifecycle == ExperienceState.preMeetup) _armLadderOnce();
   }
 
   /// Group formation and the chat opening are the same event -- there is no lobby.

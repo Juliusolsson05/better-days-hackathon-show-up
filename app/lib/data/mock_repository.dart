@@ -188,6 +188,24 @@ class MockRepository implements Repository {
   }
 
   @override
+  Future<ExperienceState> experienceState(String groupId) async {
+    final current = await currentGroup();
+    if (current == null || current.id != groupId) {
+      return ExperienceState.cancelled;
+    }
+    if (await hasCompletedAfterFlow(groupId)) return ExperienceState.completed;
+    final now = DateTime.now();
+    if (now.isBefore(current.eventAt)) return ExperienceState.preMeetup;
+    if (now.isBefore(current.eventAt.add(const Duration(hours: 2)))) {
+      return ExperienceState.during;
+    }
+    if (now.isBefore(current.eventAt.add(const Duration(days: 7)))) {
+      return ExperienceState.after;
+    }
+    return ExperienceState.completed;
+  }
+
+  @override
   Future<RsvpStatus> myRsvp(String groupId) async {
     await Future.delayed(_lag);
     return _rsvp;

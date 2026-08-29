@@ -45,6 +45,7 @@ begin
     update public.groups
     set venue_vote_closes_at = now() - interval '1 second'
     where id = no_vote_grp;
+    perform set_config('showup.test.lifecycle_group', no_vote_grp::text, true);
     if public.finalize_due_venue_votes() < 1
        or (select chosen_venue_id from public.groups where id = no_vote_grp) <> high_option then
         raise exception 'zero-vote deadline did not choose the highest grounded score';

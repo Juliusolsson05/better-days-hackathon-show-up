@@ -42,6 +42,10 @@ abstract class Repository {
   /// Null until the matching sweep has placed you in a group.
   Future<Group?> currentGroup();
 
+  /// Durable phase for the group returned by [currentGroup]. Production reads this from the same
+  /// server-owned lifecycle RPC; the mock derives it only for isolated UI tests.
+  Future<ExperienceState> experienceState(String groupId);
+
   /// Membership is server-created; RSVP is the one decision the matched person owns.
   Future<RsvpStatus> myRsvp(String groupId);
   Future<void> setRsvp(String groupId, RsvpStatus status);

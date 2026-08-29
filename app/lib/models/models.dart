@@ -3,6 +3,10 @@
 
 enum Phase { auth, onboarding, waiting, matched, during, after, contacts }
 
+/// Server-owned lifecycle returned by current_experience(). The app may present these states but
+/// never derives them from its own clock or from the mere existence of a membership row.
+enum ExperienceState { preMeetup, during, after, completed, cancelled }
+
 /// RSVP is persisted separately from membership because being placed in a group and agreeing
 /// to attend are different facts. Keeping the pending state explicit prevents a missing row or
 /// failed read from being presented as a decline.

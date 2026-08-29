@@ -14,7 +14,7 @@ FROM
         user_id,
         windowFunnel(604800)(
             toDateTime(ts),
-            name = 'notif_sent',
+            name = 'group_formed',
             name = 'rsvp',
             name = 'attended',
             name = 'number_shared'

@@ -68,7 +68,7 @@ would fail CORS preflight.
 
 | Panel | Source | Notes |
 |---|---|---|
-| The funnel | `funnel`: `[{level, people}]` from `windowFunnel(notif_sent → rsvp → attended → number_shared)` | `level` is the furthest step a user reached, 0–4. The page folds these into **cumulative** bars (everyone who got *at least* this far) and marks each drop-off. |
+| The funnel | `funnel`: `[{level, people}]` from `windowFunnel(group_formed → rsvp → attended → number_shared)` | `level` is the furthest step a user reached, 0–4. Assignment is emitted only by matching; every later durable event is accepted only after the tracking function verifies its Postgres row. |
 | Match-tightness scale | `cohesion`: `[{bucket, n}]` — `group_formed` count per rounded `seed_distance` | Shows *where groups landed* on the tightness axis. A true per-bucket funnel (does a tighter match convert better?) needs the function to cross `windowFunnel` with this bucket — a follow-up on the edge function, not the page. |
 | Events · last 7 days | `volume`: `[{name, n}]` | Raw event counts. |
 | Footer | `scanned` = `funnel.stats` (ClickHouse `statistics` block) | `rows_read` and `elapsed`. `docs/DESIGN.md` §4.7: the database reporting its own scan cost rather than us claiming a number. |

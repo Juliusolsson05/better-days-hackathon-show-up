@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS events
     ts       DateTime64(3) DEFAULT now64(3),
     user_id  UUID,
     group_id UUID,
-    name     LowCardinality(String),  -- signup|rsvp|notif_sent|notif_opened|attended|answered|number_shared
+    name     LowCardinality(String),  -- signup|group_formed|rsvp|notif_opened|attended|answered|number_shared
     props    String                    -- free-form JSON, kept as String so new fields need no migration
 )
 ENGINE = MergeTree

@@ -80,13 +80,13 @@ abstract class Repository {
 
   Future<Assignment> assignment(String groupId);
 
-  /// Appends one product-funnel event.
+  /// Appends one verified telemetry or product-funnel event.
   ///
   /// This is the ONLY path from the client to ClickHouse, and it is deliberately
   /// indirect -- ClickHouse takes arbitrary SQL and has no per-row permissions, so a
   /// credential in the app binary would expose the whole population. The `track` edge
-  /// function holds the credential and accepts only a whitelisted event name about the
-  /// calling user.
+  /// function holds the credential, accepts only a whitelist about the calling user, and reads
+  /// every durable product fact back from Postgres before it can enter the funnel.
   ///
   /// Fire-and-forget by contract: analytics must never be able to fail a user action,
   /// so implementations swallow their errors rather than propagating them.

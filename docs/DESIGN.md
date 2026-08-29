@@ -470,7 +470,9 @@ work or not, and it is the only part that cannot be faked on stage.
 | Matches look random | The centering sanity check in `002_seed.sql` catches this before the UI exists |
 | Signing not set up for the physical iPhone | Set the Xcode team early; free personal team is sufficient |
 
-**The closing slide** is the `windowFunnel` query: notified → RSVP'd → attended → exchanged
-numbers, sliced by how tightly the group was matched. That is the argument that this is not
+**The closing slide** is the `windowFunnel` query: assigned → RSVP'd → attended → chose to
+share numbers, sliced by how tightly the group was matched. Assignment is emitted only by the
+matching worker, and every later durable fact is checked against Postgres before tracking. That is
+the argument that this is not
 just an app but a measurable claim about what actually produces friendship — and it is a
 question that cannot be answered without the OLAP half.

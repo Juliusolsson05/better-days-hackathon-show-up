@@ -1,22 +1,95 @@
 // The client's only way to reach ClickHouse.
 //
-// The funnel in clickhouse/queries/funnel.sql -- the closing slide -- walks
-// signup -> notif_sent -> rsvp -> attended -> number_shared. Before this function, only
-// `signup` (submit-profile) and `group_formed` (run-matching) were ever emitted, because
-// every other stage happens on the phone and the phone cannot talk to ClickHouse. The
-// dashboard therefore reported level 0 for every user regardless of what they did.
+// The funnel in clickhouse/queries/funnel.sql starts with the server-emitted group assignment.
+// Durable later stages are accepted only after the function reads the corresponding Postgres fact.
+// The phone can report that it opened a screen, but cannot manufacture an RSVP, venue ballot,
+// attendance submission, reflection, message, or contact decision by naming an event.
 //
 // Flutter never gets a ClickHouse credential: that interface accepts arbitrary SQL and
 // has no per-row permissions, so a key in the app binary hands whoever extracts it the
 // whole population. This function is the seam -- it holds the credential, and the only
 // thing the client can do through it is append a row about itself.
 
-import { createClient } from "npm:@supabase/supabase-js@2.47.10";
+import {
+  createClient,
+  type SupabaseClient,
+} from "npm:@supabase/supabase-js@2.47.10";
 import { emit } from "../_shared/clickhouse.ts";
 import {
+  isDurableFactName,
   parseTrackingRequest,
   TrackingRequestError,
 } from "../_shared/tracking.ts";
+
+async function durableFactProps(
+  service: SupabaseClient,
+  name: string,
+  userId: string,
+  groupId: string,
+): Promise<Record<string, unknown> | null> {
+  switch (name) {
+    case "rsvp": {
+      const { data, error } = await service.from("rsvps")
+        .select("status")
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.status === "confirmed" || data?.status === "declined"
+        ? { status: data.status }
+        : null;
+    }
+    case "chat_first_message": {
+      const { count, error } = await service.from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .eq("kind", "user");
+      if (error) throw error;
+      return (count ?? 0) > 0 ? { message_count: count } : null;
+    }
+    case "venue_voted": {
+      const { data, error } = await service.from("venue_votes")
+        .select("option_id")
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? { option_id: data.option_id } : null;
+    }
+    case "attended": {
+      const { data, error } = await service.from("attendance_votes")
+        .select("showed_up")
+        .eq("group_id", groupId)
+        .eq("voter_id", userId);
+      if (error) throw error;
+      if (!data?.length) return null;
+      return {
+        evaluated_count: data.length,
+        showed_up_count: data.filter((row) => row.showed_up === true).length,
+      };
+    }
+    case "answered": {
+      const { data, error } = await service.from("reflections")
+        .select("was_fallback")
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? { fallback: data.was_fallback === true } : null;
+    }
+    case "number_shared": {
+      const { count, error } = await service.from("contact_selections")
+        .select("selected_id", { count: "exact", head: true })
+        .eq("group_id", groupId)
+        .eq("selector_id", userId);
+      if (error) throw error;
+      return (count ?? 0) > 0 ? { selected_count: count } : null;
+    }
+    default:
+      return null;
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
@@ -40,6 +113,13 @@ Deno.serve(async (req) => {
     const { data: user } = await supabase.auth.getUser();
     if (!user?.user) return new Response("unauthorized", { status: 401 });
     const uid = user.user.id;
+
+    // This client never accepts an identity from the request. It is used only after the caller's
+    // JWT is verified and every query below is pinned to that uid and a verified membership.
+    const service = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
 
     let body: unknown;
     try {
@@ -82,7 +162,28 @@ Deno.serve(async (req) => {
         rejected.push(`${e.name}:not_a_member`);
         continue;
       }
-      await emit(e.name, uid, e.group_id ?? null, e.props ?? {});
+      let props = e.props ?? {};
+      if (isDurableFactName(e.name)) {
+        // Every durable fact is group-scoped. Rejecting a missing id here also prevents a caller
+        // from turning a real RSVP in one group into an unscoped user-level funnel row.
+        if (!e.group_id) {
+          rejected.push(`${e.name}:group_required`);
+          continue;
+        }
+        const verified = await durableFactProps(
+          service,
+          e.name,
+          uid,
+          e.group_id,
+        );
+        if (!verified) {
+          rejected.push(`${e.name}:fact_missing`);
+          continue;
+        }
+        // Product-fact metadata comes from Postgres, never from the caller's JSON body.
+        props = verified;
+      }
+      await emit(e.name, uid, e.group_id ?? null, props);
       written++;
     }
 

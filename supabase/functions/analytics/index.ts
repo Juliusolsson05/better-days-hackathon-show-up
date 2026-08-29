@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
     const [funnel, cohesion, volume] = await Promise.all([
       ch(`SELECT level, count() AS people FROM (
             SELECT user_id, windowFunnel(604800)(toDateTime(ts),
-              name = 'notif_sent', name = 'rsvp', name = 'attended', name = 'number_shared'
+              name = 'group_formed', name = 'rsvp', name = 'attended', name = 'number_shared'
             ) AS level
             FROM events WHERE ts > now() - INTERVAL 30 DAY GROUP BY user_id
           ) GROUP BY level ORDER BY level`),

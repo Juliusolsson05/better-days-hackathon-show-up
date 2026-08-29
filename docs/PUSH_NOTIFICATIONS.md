@@ -214,12 +214,13 @@ and the `always` permission would be requested separately, later, with its own e
 
 ## 4. Measurement
 
-Every rung emits to the ClickHouse event stream, which is what makes the funnel query in
-`clickhouse/queries/funnel.sql` work at all:
+Notification opens emit interaction telemetry. Delivery itself must come from the future server
+dispatcher; the local scheduler cannot honestly prove that iOS displayed anything and therefore
+does not write `notif_sent`. The production funnel starts with the server-owned group assignment:
 
 | Event | Emitted when |
 |---|---|
-| `notif_sent` | Scheduled (today) / dispatched (production) |
+| `notif_sent` | Dispatched by the production server worker only |
 | `notif_opened` | Notification tapped, with `rung` in props |
 | `rsvp` | RSVP set, with source = `notification_action` or `in_app` |
 | `attended` | Doorway rung tapped, or manual check-in |
@@ -238,7 +239,7 @@ single `windowFunnel` query.
 3. Deep-link routing, cold start **and** warm start
 4. The four bodies of copy, with real names interpolated
 5. Notification actions on the reveal rung
-6. `notif_sent` / `notif_opened` emission to ClickHouse
+6. Server `notif_sent` and client `notif_opened` emission to ClickHouse
 7. Post-event reflection rung
 
 Rungs 1–4 are the demo. Everything after is upside.

@@ -176,7 +176,6 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    await repo.track('notif_sent', groupId: group!.id, props: {'demo': demo});
     notifyListeners();
   }
 

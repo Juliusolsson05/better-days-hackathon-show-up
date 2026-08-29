@@ -268,6 +268,10 @@ class SupabaseRepository implements Repository {
       'set_rsvp',
       params: rsvpSubmissionParams(groupId: groupId, status: status),
     );
+    // The tracking boundary reads this row back before accepting the funnel event. Analytics can
+    // fail without rolling back the RSVP, but a modified client cannot claim an RSVP that is not
+    // already durable in Postgres.
+    await track('rsvp', groupId: groupId);
   }
 
   /// Messages this device has sent but not yet seen echoed back, per group.

@@ -174,7 +174,7 @@
       <span id="statusText">connecting…</span>
     </div>
   </header>
-  <p class="sub">Notified → RSVP’d → attended → left with each other’s numbers. The last bar is the point of the product.</p>
+  <p class="sub">Assigned → RSVP’d → attended → chose to share a number. The last bar is the point of the product.</p>
 
   <!--
     Operator controls. There is no other trigger for run-matching yet: pg_cron is the
@@ -286,12 +286,12 @@ async function fetchAnalytics() {
 
 const FUNNEL_STAGES = [
   // Index here is the windowFunnel step number. The function's query lists the steps as
-  // notif_sent, rsvp, attended, number_shared -- so a user's `level` is the furthest of
+  // group_formed, rsvp, attended, number_shared -- so a user's `level` is the furthest of
   // these they reached, 0..4.
-  { step: 1, name: "Notified" },
+  { step: 1, name: "Assigned" },
   { step: 2, name: "RSVP’d" },
   { step: 3, name: "Attended" },
-  { step: 4, name: "Left with a number", win: true },
+  { step: 4, name: "Chose to share", win: true },
 ];
 
 function renderFunnel(rows) {

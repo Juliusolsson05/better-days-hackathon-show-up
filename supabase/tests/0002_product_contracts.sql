@@ -99,7 +99,7 @@ begin
     end;
 
     select public.form_group(
-        now() - interval '3 days',
+        now() + interval '3 days',
         '{"name":"Legacy One","address":"1 Test St"}'::jsonb,
         'talk',
         0.1,
@@ -111,7 +111,7 @@ begin
     ) into g1;
 
     select public.form_group(
-        now() - interval '4 days',
+        now() + interval '4 days',
         '{"name":"Legacy Two","address":"2 Test St"}'::jsonb,
         'walk',
         0.2,
@@ -279,6 +279,12 @@ begin
     exception when object_not_in_prerequisite_state then
         null;
     end;
+
+    -- The remaining suite exercises post-meetup privacy. Moving the fixture into its historical
+    -- phase here keeps venue-ballot integrity testable before the deadline while preserving the
+    -- same durable lifecycle boundary for reflections, attendance, and contacts below.
+    update public.groups set event_at = now() - interval '3 days' where id = g1;
+    update public.groups set event_at = now() - interval '4 days' where id = g2;
 
     insert into public.contact_selections (group_id, selector_id, selected_id)
     values (g1, user_ids[1], user_ids[2]);

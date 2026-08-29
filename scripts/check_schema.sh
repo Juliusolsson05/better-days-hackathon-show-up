@@ -21,6 +21,7 @@ command -v psql >/dev/null || { echo "psql is required"; exit 1; }
 
 SCHEMA_STATE="$(psql "$SCHEMA_TEST_DB_URL" -X -Atc \
   "select case
+     when to_regprocedure('public.finalize_due_venue_votes()') is not null then '0015'
      when to_regprocedure('public.leave_group(uuid)') is not null then '0014'
      when to_regprocedure('public.send_message(uuid,uuid,text)') is not null then '0013'
      when to_regprocedure('private.invoke_weekly_matching()') is not null then '0012'
@@ -69,8 +70,9 @@ case "$SCHEMA_STATE" in
   0012) SCHEMA_RANK=12 ;;
   0013) SCHEMA_RANK=13 ;;
   0014) SCHEMA_RANK=14 ;;
+  0015) SCHEMA_RANK=15 ;;
   *)
-    echo "local database is not a recognized 0001 through 0014 Show Up schema"
+    echo "local database is not a recognized 0001 through 0015 Show Up schema"
     exit 1
     ;;
 esac
@@ -103,6 +105,7 @@ if (( SCHEMA_RANK < 11 )); then PSQL_FILES+=(-f supabase/migrations/0011_profile
 if (( SCHEMA_RANK < 12 )); then PSQL_FILES+=(-f supabase/migrations/0012_weekly_matching_cron.sql); fi
 if (( SCHEMA_RANK < 13 )); then PSQL_FILES+=(-f supabase/migrations/0013_message_write_boundary.sql); fi
 if (( SCHEMA_RANK < 14 )); then PSQL_FILES+=(-f supabase/migrations/0014_member_safety.sql); fi
+if (( SCHEMA_RANK < 15 )); then PSQL_FILES+=(-f supabase/migrations/0015_venue_vote_deadline.sql); fi
 
 # Every suite runs against the final in-transaction shape. Older tests protect invariants shared by
 # later migrations, while 0008/0009 specifically exercise the two write doors that moved behind
@@ -123,6 +126,7 @@ PSQL_FILES+=(
   -f supabase/tests/0012_weekly_matching_cron.sql
   -f supabase/tests/0013_message_write_boundary.sql
   -f supabase/tests/0014_member_safety.sql
+  -f supabase/tests/0015_venue_vote_deadline.sql
 )
 
 psql "$SCHEMA_TEST_DB_URL" -X -q -v ON_ERROR_STOP=1 \

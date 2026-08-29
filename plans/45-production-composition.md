@@ -20,3 +20,21 @@ Issue: #45
 - `Phase.home`, `referenceUiPreview`, and release demo controls disappear from production state.
 - Missing Supabase configuration aborts before `runApp`.
 - Production Sentry sends no default PII, screenshot, or view hierarchy.
+
+## Completed hardening
+
+- Production and fixture products now have separate composition roots and launch scripts.
+- The approved onboarding is the only onboarding implementation and persists name, private phone,
+  custom interests, photo, free-form matching text, and availability.
+- Chat, RSVP, reporting, blocking, leaving, lifecycle restoration, and venue finalization now cross
+  server-owned boundaries with database contract tests.
+- The after-meetup flow has one durable route and neutral contact-result framing.
+- Durable analytics events are verified against their Postgres rows; the browser dashboard no
+  longer accepts or stores a service-role credential.
+- Android release configuration includes the desugaring required by the notification dependency.
+
+## Verification
+
+`./scripts/check.sh` passes 38 Deno behavior tests, 51 Flutter tests, Flutter analysis/format,
+release-manifest checks, Terraform validation/privacy tests, ClickHouse CDC parsing, and all
+Postgres migration contracts through `0017_rsvp_write_boundary.sql`.

@@ -65,7 +65,7 @@ void main() {
     expect(find.text('Find my table'), findsOneWidget);
   });
 
-  testWidgets('reference completion submits interests and photo', (
+  testWidgets('production completion submits interests and photo', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);

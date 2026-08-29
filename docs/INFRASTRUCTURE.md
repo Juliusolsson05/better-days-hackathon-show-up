@@ -183,7 +183,7 @@ Three functions, all Deno, all in `supabase/functions/`.
 | Function | Auth | Calls out to | Triggered by |
 |---|---|---|---|
 | `submit-profile` | User JWT | Voyage, Anthropic, ClickHouse | End of onboarding |
-| `run-matching` | Service role | Anthropic, ClickHouse | `pg_cron`, or a demo button |
+| `run-matching` | Service role internally; matching-only secret for browser trigger | Anthropic, ClickHouse | `pg_cron`, or a demo button |
 | `analytics` | None today | ClickHouse | Dashboard |
 
 **`_shared/` — the underscore is load-bearing.** Supabase deploys every directory under
@@ -339,13 +339,12 @@ file, so the app can be pointed at a different project without a code change:
 
 ```bash
 flutter run \
-  --dart-define=USE_SUPABASE=true \
   --dart-define=SUPABASE_URL=https://xxx.supabase.co \
   --dart-define=SUPABASE_ANON_KEY=eyJ...
 ```
 
-Supabase is the default for ordinary runs so a missing selector cannot silently launch the
-fixture app. Pass `--dart-define=USE_SUPABASE=false` only for intentional offline/mock work.
+Production always uses Supabase and fails closed when either value is missing. Intentional
+offline/design review uses `./scripts/run_reference.sh`, which targets `main_reference.dart`.
 
 **If a service role key ever reaches the client, every RLS policy in this document becomes
 decorative.** That is the one mistake with no recovery short of rotating the key.
@@ -377,4 +376,4 @@ Roughly in dependency order. Items marked ⚠ are the ones that fail quietly.
 - [ ] `./scripts/deploy_clickhouse_cdc.sh apply`
 - [ ] ⚠ Monitor the ClickPipe state and source replication-slot WAL retention
 - [ ] ⚠ Set the Xcode signing team so a build reaches the physical iPhone
-- [ ] `flutter run` with `USE_SUPABASE=true` and both Supabase `--dart-define`s
+- [ ] `flutter run` with both Supabase `--dart-define`s

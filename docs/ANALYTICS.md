@@ -34,25 +34,20 @@ room.
 
 ## Operator controls — running the sweep
 
-There is no other trigger for `run-matching` yet: `pg_cron` is the production path (not set
-up), and the phone app can't call it because the function gates on the **service-role
-key**, which must never ship in a client binary. So the demo driver runs it from here.
+`pg_cron` is the production trigger. The dashboard can also invoke the job with the public
+anon JWT plus `MATCHING_JOB_SECRET`; that narrow secret cannot access the database or bypass RLS.
 
-Expand **"Operator controls — run the sweep"** (collapsed by default — the service key must
-not be on screen while the funnel is projected), paste the service-role key, set city/slot,
+Expand **"Operator controls — run the sweep"**, paste the matching-job secret, set city/slot,
 hit **Run the sweep**. It POSTs to `/functions/v1/run-matching` and shows
 `groups formed / unmatched / skipped`, then pulls the funnel forward immediately instead of
 waiting for the next poll.
 
-- The service-role key **bypasses row-level security**. It is kept in that browser's
-  `localStorage` (key `su_service_key`) and sent only to `run-matching`. Clear it with
-  `localStorage.removeItem('su_service_key')` or by clearing site data.
+- Never paste the service-role key into the dashboard. Rotate it if an older dashboard stored it.
+  The current page stores only `MATCHING_JOB_SECRET` under `su_matching_job_secret`.
 - "Empty pool" means no profiles in that city/slot have `embedded_at` set — sign some up
-  through the app (with `--dart-define=USE_SUPABASE=true`) first.
-- `run-matching` had **no CORS** and no `OPTIONS` handler; this change adds both (mirroring
-  `analytics/index.ts`) so a browser can call it. The `SUPABASE_SERVICE_ROLE_KEY` bearer
-  check is untouched — `Access-Control-Allow-Origin: *` only lets the response reach the
-  page, it authorises nothing.
+  through the production app first.
+- `Access-Control-Allow-Origin: *` only lets the response reach the page; authorization still
+  requires both the gateway JWT and the separate matching-job header.
 
 ## One deploy detail
 

@@ -7,6 +7,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.47.10";
 import { arr, ch, emit } from "../_shared/clickhouse.ts";
 import { planGroup } from "../_shared/claude.ts";
 import { openChat } from "../_shared/chat.ts";
+import { canInvokeMatching } from "../_shared/matching_auth.ts";
 import {
   blockedPairKey,
   haveBlockedRelationship,
@@ -27,7 +28,8 @@ const MAX_GROUP = 6;
 // Mirrors supabase/functions/analytics/index.ts, which does the same for the same reason.
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, content-type, x-matching-job-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -45,8 +47,15 @@ Deno.serve(async (req) => {
     // Supabase's default verify_jwt is satisfied by the anon key, which ships inside the
     // app binary -- so without this check any user could trigger the sweep and burn tokens.
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const auth = req.headers.get("Authorization") ?? "";
-    if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
+    if (
+      !canInvokeMatching({
+        authorization: req.headers.get("Authorization") ?? "",
+        operatorSecret: req.headers.get("x-matching-job-secret") ?? "",
+        serviceRoleKey,
+        anonKey: Deno.env.get("SUPABASE_ANON_KEY"),
+        matchingJobSecret: Deno.env.get("MATCHING_JOB_SECRET"),
+      })
+    ) {
       return new Response("forbidden", { status: 403, headers: CORS });
     }
 

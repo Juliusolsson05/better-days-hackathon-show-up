@@ -264,14 +264,10 @@ class SupabaseRepository implements Repository {
     if (status == RsvpStatus.pending) {
       throw ArgumentError('RSVP can only be confirmed or declined by the user');
     }
-    await _client.from('rsvps').upsert({
-      'group_id': groupId,
-      'user_id': _userId,
-      'status': status.name,
-    }, onConflict: 'group_id,user_id');
-    // Postgres is the product fact. The funnel may observe it only after that write succeeds,
-    // so a ClickHouse outage cannot create an RSVP the app itself does not have.
-    await track('rsvp', groupId: groupId, props: {'status': status.name});
+    await _client.rpc<void>(
+      'set_rsvp',
+      params: rsvpSubmissionParams(groupId: groupId, status: status),
+    );
   }
 
   /// Messages this device has sent but not yet seen echoed back, per group.
@@ -735,6 +731,14 @@ Map<String, dynamic> messageSubmissionParams({
   required String clientMsgId,
   required String body,
 }) => {'grp': groupId, 'client_id': clientMsgId, 'message_body': body};
+
+/// The RSVP payload carries only the member's decision. Postgres derives the caller, verifies
+/// active membership, enforces the deadline, and marks a declined assignment for repair.
+@visibleForTesting
+Map<String, dynamic> rsvpSubmissionParams({
+  required String groupId,
+  required RsvpStatus status,
+}) => {'grp': groupId, 'new_status': status.name};
 
 ExperienceState _decodeExperienceState(String value) => switch (value) {
   'pre_meetup' => ExperienceState.preMeetup,

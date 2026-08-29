@@ -25,6 +25,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('You go alone.\nSo does everyone else.'), findsOneWidget);
+    expect(
+      find.text('A table of four to six people who all came alone.'),
+      findsOneWidget,
+    );
   });
 }

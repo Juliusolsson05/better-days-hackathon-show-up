@@ -8,7 +8,7 @@ import 'package:showup/reference_app.dart';
 import 'package:showup/state/app_state.dart';
 
 void main() {
-  testWidgets('approved onboarding follows the three reference steps', (
+  testWidgets('approved onboarding collects every production field', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -24,6 +24,23 @@ void main() {
     );
     expect(find.text('Continue'), findsOneWidget);
 
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A little about you'), findsOneWidget);
+    expect(find.byKey(const Key('display-name-input')), findsOneWidget);
+    expect(find.byKey(const Key('phone-input')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('display-name-input')),
+      'Julius',
+    );
+    await tester.enterText(
+      find.byKey(const Key('phone-input')),
+      '(415) 555-0123',
+    );
+    await tester.pump();
+    tester.testTextInput.hide();
+    await tester.pump();
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
@@ -66,12 +83,21 @@ void main() {
         home: OnboardingScreen(
           state,
           pickPhoto: () async => XFile('assets/mock/maya.jpg'),
-          referenceUiPreview: true,
-          onReferenceComplete: () => completed = true,
+          onComplete: () => completed = true,
         ),
       ),
     );
 
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('display-name-input')),
+      'Julius',
+    );
+    await tester.enterText(find.byKey(const Key('phone-input')), '4155550123');
+    await tester.pump();
+    tester.testTextInput.hide();
+    await tester.pump();
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Slow coffee'));
@@ -101,12 +127,10 @@ void main() {
     expect(await repo.hasProfile(), isTrue);
   });
 
-  testWidgets('production onboarding still requires private profile fields', (
+  testWidgets('production onboarding rejects an incomplete private phone', (
     tester,
   ) async {
-    // The live backend still requires fields absent from the approved mock. Keeping this test
-    // makes the presentation split explicit until those fields receive an approved design.
-    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -118,25 +142,23 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNull,
-    );
-
-    await tester.enterText(find.byType(TextField).first, 'Julius');
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.byType(TextField).last,
-      'I boulder four times a week and read routes badly.',
+      find.byKey(const Key('display-name-input')),
+      'Julius',
     );
-    await tester.tap(find.text('climbing'));
+    await tester.enterText(find.byKey(const Key('phone-input')), '415');
+    await tester.tap(find.text('Continue'));
     await tester.pump();
+    expect(find.text('A little about you'), findsOneWidget);
 
-    // Name/interests/passion are not enough. A photo is how groupmates recognise one another,
-    // and a phone is the value mutual selection eventually discloses; allowing a profile
-    // without them creates a user who can match but cannot complete the product loop.
-    expect(
-      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-      isNull,
-    );
+    await tester.enterText(find.byKey(const Key('phone-input')), '4155550123');
+    await tester.pump();
+    tester.testTextInput.hide();
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('What would you actually show up for?'), findsOneWidget);
   });
 }

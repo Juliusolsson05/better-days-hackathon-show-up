@@ -17,15 +17,13 @@ class OnboardingScreen extends StatefulWidget {
     this.state, {
     super.key,
     this.pickPhoto,
-    this.referenceUiPreview = false,
-    this.onReferenceComplete,
+    this.onComplete,
   });
 
   /// The platform picker is injected only by widget tests. Keeping the seam at the OS boundary
   /// lets tests exercise the approved photo step without weakening its required-photo contract.
   final PhotoPicker? pickPhoto;
-  final bool referenceUiPreview;
-  final VoidCallback? onReferenceComplete;
+  final VoidCallback? onComplete;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -171,19 +169,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // The approved mock is intentionally available only in the gated reference build. Its three
-    // steps do not collect the private phone and matching prose required by the live Supabase
-    // contract, so silently using it in production would trade visual parity for invalid profiles.
-    // Keeping both presentations at this boundary makes the preview exact without weakening the
-    // backend-capable flow while those missing fields await an approved product design.
-    if (widget.referenceUiPreview) {
-      return _ReferenceOnboarding(
-        widget.state,
-        pickPhoto: widget.pickPhoto,
-        onComplete: widget.onReferenceComplete,
-      );
-    }
+    // The reviewed multi-step design is the production flow. It now collects every field required
+    // by submit-profile, so there is no longer a reason to route real users through the old form.
+    return _ReferenceOnboarding(
+      widget.state,
+      pickPhoto: widget.pickPhoto,
+      onComplete: widget.onComplete,
+    );
 
+    // TODO(#45): delete the unreachable legacy form after the stacked PR is rebased onto the final
+    // onboarding design branch. It remains below only to keep this safety change reviewable.
+    // ignore: dead_code
     return Scaffold(
       appBar: AppBar(title: const Text('Show Up')),
       body: ListView(
@@ -400,17 +396,24 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
   ];
 
   var _step = 0;
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
   final _picked = <String>{};
   final _customInterests = <String>[];
   final _customInterest = TextEditingController();
   final _about = TextEditingController();
+  final _availability = <String>{'fri_eve'};
   XFile? _photo;
   var _busy = false;
 
   bool get _canContinue => switch (_step) {
     0 => true,
-    1 => _picked.length >= 2,
-    _ => _photo != null && _about.text.trim().length > 10,
+    1 => _name.text.trim().isNotEmpty && normalizeSfPhone(_phone.text) != null,
+    2 => _picked.length >= 2,
+    _ =>
+      _photo != null &&
+          _about.text.trim().length > 10 &&
+          _availability.isNotEmpty,
   };
 
   void _addCustomInterest() {
@@ -491,26 +494,21 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
   Future<void> _continue() async {
     if (!_canContinue || _busy) return;
-    if (_step < 2) {
+    if (_step < 3) {
       setState(() => _step += 1);
       return;
     }
 
     setState(() => _busy = true);
     try {
-      // The reference shell is backed exclusively by MockRepository. It still receives a real
-      // Profile so the rest of AppState observes the same completion boundary as production.
-      // Only identity/contact/availability remain mock placeholders; interests, free-form matching
-      // prose, and the photo are genuine user inputs because losing any of those would make the
-      // reference UX demonstrate a different matching product.
       final profile = await widget.state.repo.submitProfile(
-        displayName: 'You',
+        displayName: _name.text.trim(),
         avatar: '🙂',
         passion: _about.text.trim(),
         tags: _picked.toList(growable: false),
         city: 'SF',
-        availability: const ['fri_eve'],
-        phone: '+14155550123',
+        availability: _availability.toList(growable: false),
+        phone: normalizeSfPhone(_phone.text)!,
         photoPath: _photo!.path,
       );
       if (widget.onComplete case final onComplete?) {
@@ -533,6 +531,8 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
 
   @override
   void dispose() {
+    _name.dispose();
+    _phone.dispose();
     _customInterest.dispose();
     _about.dispose();
     super.dispose();
@@ -547,7 +547,7 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
           children: [
             Row(
               children: [
-                for (var i = 0; i < 3; i++) ...[
+                for (var i = 0; i < 4; i++) ...[
                   if (i > 0) const SizedBox(width: 6),
                   Expanded(
                     child: AnimatedContainer(
@@ -580,7 +580,12 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                   key: ValueKey(_step),
                   child: switch (_step) {
                     0 => const _ReferenceWelcomeStep(),
-                    1 => _ReferenceInterestsStep(
+                    1 => _ReferenceIdentityStep(
+                      nameController: _name,
+                      phoneController: _phone,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    2 => _ReferenceInterestsStep(
                       picked: _picked,
                       customInterests: _customInterests,
                       customInterestController: _customInterest,
@@ -597,6 +602,12 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
                       onAboutChanged: (_) => setState(() {}),
                       onPick: _pickPhoto,
                       onClear: () => setState(() => _photo = null),
+                      availability: _availability,
+                      onToggleAvailability: (slot) => setState(
+                        () => _availability.contains(slot)
+                            ? _availability.remove(slot)
+                            : _availability.add(slot),
+                      ),
                     ),
                   },
                 ),
@@ -604,26 +615,10 @@ class _ReferenceOnboardingState extends State<_ReferenceOnboarding> {
             ),
             const SizedBox(height: 24),
             _ReferencePrimaryButton(
-              label: _step == 2 ? 'Find my table' : 'Continue',
+              label: _step == 3 ? 'Find my table' : 'Continue',
               enabled: _canContinue && !_busy,
               busy: _busy,
               onPressed: _continue,
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _busy ? null : widget.onComplete,
-              style: TextButton.styleFrom(
-                foregroundColor: mutedInk,
-                minimumSize: const Size.fromHeight(32),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.underline,
-                  decorationColor: mutedInk,
-                ),
-              ),
-              child: const Text('Skip onboarding'),
             ),
           ],
         ),
@@ -660,6 +655,61 @@ class _ReferenceWelcomeStep extends StatelessWidget {
         Text(
           "No plus-ones, no odd one out. You'll get one lighthearted question to ask one person, so there's nothing to figure out when you arrive.",
           style: _referenceBody,
+        ),
+      ],
+    ),
+  );
+}
+
+class _ReferenceIdentityStep extends StatelessWidget {
+  const _ReferenceIdentityStep({
+    required this.nameController,
+    required this.phoneController,
+    required this.onChanged,
+  });
+
+  final TextEditingController nameController;
+  final TextEditingController phoneController;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    padding: const EdgeInsets.only(top: 32),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('A little about you', style: _referenceStepTitle),
+        const SizedBox(height: 8),
+        const Text(
+          'Your first name is visible to your group. Your number stays private unless you and someone else both choose to share after the meetup.',
+          style: TextStyle(color: bodyInk, fontSize: 13, height: 1.4),
+        ),
+        const SizedBox(height: 24),
+        TextField(
+          key: const Key('display-name-input'),
+          controller: nameController,
+          onChanged: onChanged,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.givenName],
+          decoration: const InputDecoration(
+            labelText: 'First name',
+            counterText: '',
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('phone-input'),
+          controller: phoneController,
+          onChanged: onChanged,
+          keyboardType: TextInputType.phone,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          decoration: const InputDecoration(
+            labelText: 'Phone number',
+            hintText: '(415) 555-0123',
+          ),
         ),
       ],
     ),
@@ -828,6 +878,8 @@ class _ReferencePhotoStep extends StatelessWidget {
     required this.onAboutChanged,
     required this.onPick,
     required this.onClear,
+    required this.availability,
+    required this.onToggleAvailability,
   });
 
   final XFile? photo;
@@ -835,6 +887,8 @@ class _ReferencePhotoStep extends StatelessWidget {
   final ValueChanged<String> onAboutChanged;
   final VoidCallback onPick;
   final VoidCallback onClear;
+  final Set<String> availability;
+  final ValueChanged<String> onToggleAvailability;
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
@@ -934,6 +988,33 @@ class _ReferencePhotoStep extends StatelessWidget {
             hintText: 'Tell us what lights you up…',
             alignLabelWithHint: true,
           ),
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'When are you usually free?',
+          style: TextStyle(
+            color: ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final slot in const <(String, String)>[
+              ('fri_eve', 'Friday evening'),
+              ('sat_day', 'Saturday daytime'),
+              ('sat_eve', 'Saturday evening'),
+              ('sun_day', 'Sunday daytime'),
+            ])
+              FilterChip(
+                label: Text(slot.$2),
+                selected: availability.contains(slot.$1),
+                onSelected: (_) => onToggleAvailability(slot.$1),
+              ),
+          ],
         ),
       ],
     ),

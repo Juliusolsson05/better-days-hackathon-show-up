@@ -38,8 +38,7 @@ class _ReferenceShowUpAppState extends State<ReferenceShowUpApp> {
         ? ProductShell(_state)
         : OnboardingScreen(
             _state,
-            referenceUiPreview: true,
-            onReferenceComplete: () => setState(() => _showProduct = true),
+            onComplete: () => setState(() => _showProduct = true),
           ),
   );
 }

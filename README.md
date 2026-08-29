@@ -130,12 +130,11 @@ clickhouse client --host <host> --secure --password <pw> < clickhouse/002_seed.s
 ./scripts/deploy_clickhouse_cdc.sh apply
 
 cd app && flutter run \
-  --dart-define=USE_SUPABASE=true \
   --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...
 ```
 
-Supabase is the default for normal launches. Use `--dart-define=USE_SUPABASE=false` only
-when you intentionally want the fixture-only reference app.
+The production entrypoint always uses Supabase and fails before `runApp` when configuration is
+missing. For the fixture-only design target, run `./scripts/run_reference.sh` explicitly.
 
 Full checklist, including the two steps that fail silently: `docs/INFRASTRUCTURE.md`.
 

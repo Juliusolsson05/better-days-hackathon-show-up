@@ -5,13 +5,12 @@ To run the signup flow (email OTP → photo upload → `submit-profile`):
 
 ```bash
 cd app && flutter run \
-  --dart-define=USE_SUPABASE=true \
   --dart-define=SUPABASE_URL=http://127.0.0.1:54321 \
   --dart-define=SUPABASE_ANON_KEY=<anon key from `supabase start`>
 ```
 
-Set `USE_SUPABASE=false` only for an intentional fixture-only run. In that mode `main()`
-does not call `Supabase.initialize` and the auth screen does not appear.
+Use `./scripts/run_reference.sh` for an intentional fixture-only run. That explicit entrypoint
+does not call `Supabase.initialize`; production `main.dart` has no mock selector.
 
 ## What the flow does
 
